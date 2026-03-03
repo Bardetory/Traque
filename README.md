@@ -1,2 +1,0 @@
-# Traque
-Traque forrestière
