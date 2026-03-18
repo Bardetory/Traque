@@ -1308,7 +1308,7 @@ async function confirmFound(){
 function denyFound(){
   document.getElementById('found-modal').style.display='none';
   pendingFoundBy=null;
-  toast('!','Conteste','Signalez le litige a l'admin');
+  toast('!','Conteste','Signalez le litige a l\'admin');
 }
 
 // Fin de partie: bonus chassés jamais trouvés
@@ -1316,7 +1316,7 @@ async function applyEndBonuses(){
   const neverFound=teams.filter(t=>t.role==='chasse'&&t.status==='active');
   for(const t of neverFound){
     await addScore(t.id,SCORE_CHASSE_BONUS,'Bonus jamais trouve !');
-    await sbPost('messages',{type:'announce',content:t.name+' n'a jamais ete trouvee ! Bonus +'+SCORE_CHASSE_BONUS+' pts',game_id:game?.id});
+    await sbPost('messages',{type:'announce',content:t.name+' n\'a jamais ete trouvee ! Bonus +'+SCORE_CHASSE_BONUS+' pts',game_id:game?.id});
   }
 }
 
