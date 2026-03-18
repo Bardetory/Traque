@@ -803,13 +803,16 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 .abtn.ok:hover{background:rgba(127,255,79,.1)}
 .abtn:disabled{opacity:.4;cursor:not-allowed}
 .abtn .ai{font-size:16px}
-.bgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:14px}
+.bgrid{display:grid;grid-template-columns:repeat(1,1fr);gap:7px;margin-bottom:14px}
 .bcard{background:var(--forest);border:1px solid var(--border);border-radius:2px;padding:11px 7px;text-align:center}
 .bicon{font-size:26px;margin-bottom:4px}
 .bname{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text);display:block}
 .bcard.earn{border-color:rgba(255,184,48,.5);background:rgba(255,184,48,.06)}
 .bcard:not(.earn) .bicon{opacity:.25;filter:grayscale(1)}
 .bcard:not(.earn) .bname{color:var(--text-dim)}
+.bpts{font-family:monospace;font-size:9px;color:var(--amber);display:block;margin-top:2px;letter-spacing:1px}
+.bearner{font-size:10px;display:block;margin-top:4px;line-height:1.4}
+.bnone{font-size:9px;color:var(--text-dim);display:block;margin-top:4px;font-family:monospace}
 #toasts{position:fixed;top:78px;left:50%;transform:translateX(-50%);z-index:900;display:flex;flex-direction:column;gap:7px;pointer-events:none;width:calc(100% - 28px);max-width:400px}
 .toast{background:var(--forest-mid);border:1px solid var(--border);border-radius:2px;padding:11px 14px;display:flex;align-items:center;gap:11px;animation:tin .3s ease,tout .3s ease 2.7s forwards}
 @keyframes tin{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
@@ -989,6 +992,10 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
     <div class="asec">
       <div class="asectitle">Visibilite</div>
       <button class="abtn" onclick="adminToggleCount()"><span id="tc-lbl">Masquer nb equipes</span></button>
+    </div>
+    <div class="asec">
+      <div class="asectitle">Fin d evenement</div>
+      <button class="abtn ok" onclick="adminEndEvent()"><span class="ai">🏆</span> Distribuer points badges</button>
     </div>
   </div>
 </div>
@@ -1184,6 +1191,7 @@ function startGPS(){
     if(myAccCircle)leafMap.removeLayer(myAccCircle);
     if(pos.coords.accuracy<80)myAccCircle=L.circle([myLat,myLng],{radius:pos.coords.accuracy,color:'rgba(127,255,79,0.4)',fillColor:'rgba(127,255,79,0.05)',fillOpacity:1,weight:1}).addTo(leafMap);
     const t=teams.find(t=>t.id===myId);if(t){t.lat=myLat;t.lng=myLng;}
+    recordPosition(myId, myLat, myLng);
     updateTeamMarkers();
     try{await sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({team_id:myId,latitude:myLat,longitude:myLng,accuracy:pos.coords.accuracy,updated_at:new Date().toISOString()}),headers:{...H,'Prefer':'resolution=merge-duplicates'}});}catch(e){}
   },()=>{},{enableHighAccuracy:true,maximumAge:2000,timeout:10000});
@@ -1205,6 +1213,7 @@ function startScoreEngine(){
       if(!game.round_started_at)return;
       const elapsed=Math.floor((Date.now()-new Date(game.round_started_at).getTime())/1000);
       const minutesDone=Math.floor(elapsed/60);
+      incrementHiddenTime(myId); // track for discretion badge
       if(minutesDone>lastMinuteScored){
         const newMins=minutesDone-lastMinuteScored;
         lastMinuteScored=minutesDone;
@@ -1275,6 +1284,7 @@ async function confirmFound(){
   if(!pendingFoundBy||!game)return;
   const r=game.current_round||0;
   const pts=SCORE_HUNTER[r]||0;
+  recordDiscovery(pendingFoundBy);
   try{
     // Eliminate prey
     await sbPatch('teams?id=eq.'+myId,{status:'eliminated'});
@@ -1411,6 +1421,7 @@ async function autoNextRound(){
 }
 
 function showRoundOverlay(r){
+  if(r===2) recordRound2Start();
   const ov=document.getElementById('round-overlay');
   document.getElementById('ro-round').textContent='MANCHE '+r+' / 4';
   document.getElementById('ro-name').textContent=ROUND_NAMES[r]||'';
@@ -1443,7 +1454,7 @@ function startPolling(){
   setInterval(async()=>{
     try{
       const pos=await sbGet('positions?select=*');
-      if(Array.isArray(pos)){pos.forEach(p=>{const t=teams.find(t=>t.id===p.team_id);if(t&&t.id!==myId){t.lat=p.latitude;t.lng=p.longitude;}});updateTeamMarkers();}
+      if(Array.isArray(pos)){pos.forEach(p=>{const t=teams.find(t=>t.id===p.team_id);if(t&&t.id!==myId){t.lat=p.latitude;t.lng=p.longitude;recordPosition(p.team_id,p.latitude,p.longitude);}});updateTeamMarkers();}
       const ft=await sbGet('teams?select=*&order=name');
       if(Array.isArray(ft)){ft.forEach(ft=>{const t=teams.find(t=>t.id===ft.id);if(t){t.status=ft.status;t.role=ft.role;t.score=ft.score;t.badges=ft.badges;}});buildTeams();updateCount();}
       if(event_){
@@ -1480,8 +1491,179 @@ function buildTeams(){
   refreshScores();
 }
 function buildBadges(){
-  const mb=CU.type==='team'?(teams.find(t=>t.id===myId)?.badges||[]):[];
-  document.getElementById('badge-grid').innerHTML=BDEFS.map(b=>`<div class="bcard ${mb.includes(b.i)?'earn':''}"><div class="bicon">${b.i}</div><span class="bname">${b.n}</span></div>`).join('');
+  renderBadgeDrawer();
+}
+
+// ── BADGE DEFINITIONS ─────────────────────────
+const BADGE_DEFS = [
+  {id:'fantomes',    icon:'🥷', name:'Fantomes',      pts:700, desc:'Equipe chasse jamais trouvee',         multi:true,  timing:'party'},
+  {id:'eclair',      icon:'⚡', name:'Traque Eclair', pts:650, desc:'Decouverte la plus rapide (M2)',       multi:false, timing:'event'},
+  {id:'nomades',     icon:'🗺️', name:'Nomades',       pts:600, desc:'Plus grande distance GPS parcourue',  multi:false, timing:'event'},
+  {id:'discretion',  icon:'🕵️', name:'Discretion',   pts:650, desc:'Meilleur ratio cache / distance',     multi:false, timing:'event'},
+  {id:'complete',    icon:'🏆', name:'Complete',       pts:600, desc:'Meilleure performance globale',       multi:false, timing:'event'},
+];
+
+function renderBadgeDrawer(){
+  const container = document.getElementById('badge-grid');
+  if(!container) return;
+  // Group badges: earned vs not earned
+  const allBadges = teams.flatMap(t => (t.badges||[]).map(bid => ({teamId:t.id, teamName:t.name, teamColor:t.color, badgeId:bid})));
+  container.innerHTML = BADGE_DEFS.map(b => {
+    const earners = allBadges.filter(e => e.badgeId === b.id);
+    const iEarned = earners.some(e => e.teamId === myId);
+    return `<div class="bcard ${earners.length>0?'earn':''}" onclick="showBadgeDetail('${b.id}')">
+      <div class="bicon">${b.icon}</div>
+      <span class="bname">${b.name}</span>
+      <span class="bpts">${b.pts} pts</span>
+      ${earners.length>0 ? '<span class="bearner">'+earners.map(e=>'<span style="color:'+e.teamColor+'">'+e.teamName+'</span>').join(', ')+'</span>' : '<span class="bnone">Non attribue</span>'}
+    </div>`;
+  }).join('');
+}
+
+function showBadgeDetail(badgeId){
+  const b = BADGE_DEFS.find(x => x.id===badgeId);
+  if(!b) return;
+  const allBadges = teams.flatMap(t => (t.badges||[]).map(bid => ({teamId:t.id, teamName:t.name, teamColor:t.color, badgeId:bid})));
+  const earners = allBadges.filter(e => e.badgeId === b.id);
+  toast(b.icon, b.name, earners.length>0 ? 'Gagne par : '+earners.map(e=>e.teamName).join(', ') : 'Pas encore attribue');
+}
+
+// ── BADGE ENGINE ──────────────────────────────
+// Track stats needed for badges
+let badgeStats = {
+  roundStartTime: null,    // when round 2 started (for eclair)
+  firstDiscoveryTime: null, // fastest discovery time in M2
+  fastestDiscoveryTeam: null,
+  teamDistances: {},       // teamId -> total meters
+  teamHiddenTime: {},      // teamId -> seconds hidden (not found)
+  teamOutOfZoneTime: {},   // teamId -> seconds out of zone
+  lastPositions: {},       // teamId -> {lat,lng}
+};
+
+function startBadgeTracking(){
+  // Track distance every GPS update
+  // Called from GPS watch + polling
+}
+
+function recordPosition(teamId, lat, lng){
+  if(!game || game.status !== 'active') return;
+  const last = badgeStats.lastPositions[teamId];
+  if(last){
+    const dist = haversine(last.lat, last.lng, lat, lng);
+    badgeStats.teamDistances[teamId] = (badgeStats.teamDistances[teamId]||0) + dist;
+  }
+  badgeStats.lastPositions[teamId] = {lat, lng};
+}
+
+function haversine(lat1, lng1, lat2, lng2){
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+    Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function recordRound2Start(){
+  badgeStats.roundStartTime = Date.now();
+  badgeStats.firstDiscoveryTime = null;
+  badgeStats.fastestDiscoveryTeam = null;
+}
+
+function recordDiscovery(hunterTeamId){
+  if((game?.current_round||0) === 2 && badgeStats.roundStartTime){
+    const elapsed = (Date.now() - badgeStats.roundStartTime) / 1000;
+    if(!badgeStats.firstDiscoveryTime || elapsed < badgeStats.firstDiscoveryTime){
+      badgeStats.firstDiscoveryTime = elapsed;
+      badgeStats.fastestDiscoveryTeam = hunterTeamId;
+    }
+  }
+}
+
+function incrementHiddenTime(teamId){
+  if(!badgeStats.teamHiddenTime[teamId]) badgeStats.teamHiddenTime[teamId] = 0;
+  badgeStats.teamHiddenTime[teamId]++;
+}
+
+async function awardBadgesEndOfParty(){
+  if(!game) return;
+  const newBadges = [];
+
+  // 1. FANTOMES: all chasse teams never found this party
+  const neverFound = teams.filter(t => t.role==='chasse' && t.status==='active');
+  for(const t of neverFound){
+    if(!(t.badges||[]).includes('fantomes')){
+      newBadges.push({team:t, badgeId:'fantomes', pts:700, immediate:true});
+    }
+  }
+
+  // 2. TRAQUE ECLAIR: fastest discovery in M2
+  if(badgeStats.fastestDiscoveryTeam){
+    const t = teams.find(x => x.id===badgeStats.fastestDiscoveryTeam);
+    if(t && !(t.badges||[]).includes('eclair')){
+      newBadges.push({team:t, badgeId:'eclair', pts:0, immediate:false}); // pts at event end
+    }
+  }
+
+  // 3. NOMADES: most distance
+  const distEntries = Object.entries(badgeStats.teamDistances);
+  if(distEntries.length > 0){
+    distEntries.sort((a,b) => b[1]-a[1]);
+    const topTeamId = distEntries[0][0];
+    const t = teams.find(x => x.id===topTeamId);
+    if(t && !(t.badges||[]).includes('nomades')){
+      newBadges.push({team:t, badgeId:'nomades', pts:0, immediate:false});
+    }
+  }
+
+  // 4. DISCRETION: best hidden time / distance ratio
+  let bestRatio = 0, bestDiscreteTeam = null;
+  teams.filter(t => t.role==='chasse').forEach(t => {
+    const ht = badgeStats.teamHiddenTime[t.id]||0;
+    const dist = Math.max(badgeStats.teamDistances[t.id]||1, 1);
+    const ratio = ht / dist;
+    if(ratio > bestRatio){ bestRatio=ratio; bestDiscreteTeam=t; }
+  });
+  if(bestDiscreteTeam && !(bestDiscreteTeam.badges||[]).includes('discretion')){
+    newBadges.push({team:bestDiscreteTeam, badgeId:'discretion', pts:0, immediate:false});
+  }
+
+  // 5. COMPLETE: best overall score this party
+  const sorted = [...teams].sort((a,b)=>(b.score||0)-(a.score||0));
+  if(sorted.length > 0){
+    const top = sorted[0];
+    if(!(top.badges||[]).includes('complete')){
+      newBadges.push({team:top, badgeId:'complete', pts:0, immediate:false});
+    }
+  }
+
+  // Apply badges
+  for(const nb of newBadges){
+    const currentBadges = nb.team.badges||[];
+    const updatedBadges = [...currentBadges, nb.badgeId];
+    await sbPatch('teams?id=eq.'+nb.team.id, {badges: updatedBadges});
+    nb.team.badges = updatedBadges;
+    if(nb.immediate && nb.pts > 0){
+      await addScore(nb.team.id, nb.pts, 'Badge '+nb.badgeId);
+    }
+    const def = BADGE_DEFS.find(x=>x.id===nb.badgeId);
+    await sbPost('messages',{type:'announce', content:def.icon+' Badge '+def.name+' → '+nb.team.name+(nb.immediate?' (+'+def.pts+' pts)':'  (points fin evenement)'), game_id:game.id});
+    toast(def.icon, 'Badge !', nb.team.name+' - '+def.name);
+  }
+  buildTeams();renderBadgeDrawer();
+}
+
+async function awardBadgesEndOfEvent(){
+  // Give pts to all event-timing badge holders
+  for(const b of BADGE_DEFS.filter(x=>x.timing==='event')){
+    const earners = teams.filter(t=>(t.badges||[]).includes(b.id));
+    for(const t of earners){
+      await addScore(t.id, b.pts, 'Badge '+b.name+' (fin evenement)');
+    }
+    if(earners.length>0){
+      await sbPost('messages',{type:'announce', content:b.icon+' Points badge '+b.name+' distribues : +'+b.pts+' pts a '+earners.map(x=>x.name).join(', ')});
+    }
+  }
 }
 async function refreshChat(){
   try{const msgs=await sbGet('messages?select=*&order=created_at.asc&limit=50');
@@ -1538,6 +1720,7 @@ async function adminStopGame(){
   if(!game)return;
   try{
     await applyEndBonuses();
+    await awardBadgesEndOfParty();
     await sbPatch('games?id=eq.'+game.id,{status:'finished',finished_at:new Date().toISOString()});
     await sbPost('messages',{type:'announce',content:'Partie terminee ! Consultez le classement final.',game_id:game.id});
     game.status='finished';
@@ -1545,6 +1728,11 @@ async function adminStopGame(){
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
     hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;updatePhase();
   }catch(e){toast('X','Erreur',''+e.message);}
+}
+
+async function adminEndEvent(){
+  await awardBadgesEndOfEvent();
+  toast('🏆','Evenement','Points de badges distribues !');
 }
 async function adminSetRole(){const tid=document.getElementById('role-team').value,role=document.getElementById('role-val').value;try{await sbPatch('teams?id=eq.'+tid,{role});const t=teams.find(t=>t.id===tid);if(t){t.role=role;buildTeams();}toast('~','Role','Mis a jour');closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
 async function adminEliminate(){const tid=document.getElementById('elim-team').value;try{await sbPatch('teams?id=eq.'+tid,{status:'eliminated'});const t=teams.find(t=>t.id===tid);if(t){t.status='eliminated';await sbPost('messages',{type:'alert',content:t.name+' eliminee par admin',game_id:game?.id});buildTeams();toast('X',t.name,'Eliminee');}closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
