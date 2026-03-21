@@ -1570,6 +1570,9 @@ function startZoneCheck(){
     const r=game.current_round||0;
     if(r===1){hideZB();return;}
     if(myLat==null)return;
+    // Les chasseurs ne sont PAS soumis aux malus de zone
+    const myTeamRole=teams.find(t=>t.id===myId)?.role;
+    if(myTeamRole==='chasseur'){hideZB();return;}
     const inside=isInZone(myLat,myLng);
     if(inside){if(wasOut){outSecs=0;malusIdx=0;wasOut=false;hideZB();toast('OK','Zone','Vous etes dans la zone');}}
     else{
@@ -1668,9 +1671,17 @@ function updateSubzoneDisplay(r){
 }
 
 function updateSubzoneColors(r){
-  // When game active + zone chosen: grey out subzones not in active list
-  if(!game||game.status!=='active'||!gameConfig.zone){
-    // Reset all to normal color
+  if(!leafMap)return;
+  // Déduire la famille active depuis activeSubzones (fonctionne côté joueur ET admin)
+  // Si gameConfig.zone est set (admin), on l'utilise ; sinon on déduit depuis activeSubzones
+  let activeFam=gameConfig.zone||null;
+  if(!activeFam&&activeSubzones.length>0){
+    const firstZ=ZONE_POLYS.find(z=>z.id===activeSubzones[0]);
+    if(firstZ) activeFam=firstZ.family;
+  }
+
+  if(!game||game.status!=='active'||!activeFam){
+    // Pas de partie active : tout en couleur normale
     Object.entries(mapLayers.zoneFamilies||{}).forEach(([fam,layer])=>{
       if(!layer)return;
       const col=ZONE_FAMILY_COLORS[fam]||'#7fff4f';
@@ -1678,25 +1689,25 @@ function updateSubzoneColors(r){
     });
     return;
   }
-  // Grey inactive zones in the active zone family
-  const activeFam=gameConfig.zone;
+
   Object.entries(mapLayers.zoneFamilies||{}).forEach(([fam,layer])=>{
     if(!layer)return;
     if(fam!==activeFam){
-      // Not selected family: grey dim
-      layer.setStyle({color:'rgba(100,100,100,0.3)',weight:1,dashArray:'4 4',fillColor:'rgba(80,80,80,0.1)',fillOpacity:0.04});
+      // Famille non active : grisée
+      layer.setStyle({color:'rgba(80,80,80,0.25)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.06)',fillOpacity:0.04});
     } else {
-      // Active family: color active subzones normally, grey inactive ones
+      // Famille active : couleur normale pour sous-zones actives, gris pour inactives
       layer.eachLayer(sublayer=>{
         const zname=sublayer.feature?.properties?.zone_name;
         const zv=ZONE_POLYS_VISUAL.find(z=>z.name===zname&&z.family===fam);
         if(!zv)return;
         const col=ZONE_FAMILY_COLORS[fam]||'#7fff4f';
+        // Avant manche 3 : toutes actives. Manche 3+ : seulement celles dans activeSubzones
         const isActive=(r<3)||activeSubzones.includes(zv.id);
         if(isActive){
           sublayer.setStyle({color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07});
         } else {
-          sublayer.setStyle({color:'rgba(80,80,80,0.4)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.15)',fillOpacity:0.08});
+          sublayer.setStyle({color:'rgba(80,80,80,0.35)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.1)',fillOpacity:0.06});
         }
       });
     }
@@ -1769,15 +1780,23 @@ function startPolling(){
             if(changed){
               activeSubzones=newSZs;activeSubzoneId=activeSubzones[0]||null;
               const r2=game.current_round||0;
-              updateSubzoneDisplay(r2);updateSubzoneBanner();
+              updateSubzoneDisplay(r2);updateSubzoneBanner();updateSubzoneColors(r2);
               if(newSZs.length>0){
                 const names=newSZs.map(z=>ZONE_POLYS.find(x=>x.id===z)?.name||z).join(' + ');
                 toast('📍','Sous-zones',names+' actives');
               }
             }
           }
-          if(!wasA&&game){toast('!','Partie','La partie a commence!');showRoundOverlay(1);startZoneCheck();startScoreEngine();}
-          if(game&&prevR&&game.current_round!==prevR){showRoundOverlay(game.current_round);outSecs=0;malusIdx=0;wasOut=false;lastMinuteScored=0;hideZB();}
+          if(!wasA&&game){
+            // Récupérer la zone active depuis les sous-zones
+            if(game.active_subzone){
+              activeSubzones=game.active_subzone.split(',').filter(Boolean);
+              activeSubzoneId=activeSubzones[0]||null;
+            }
+            toast('!','Partie','La partie a commence!');showRoundOverlay(1);startZoneCheck();startScoreEngine();
+            updateSubzoneColors(game.current_round||1);
+          }
+          if(game&&prevR&&game.current_round!==prevR){showRoundOverlay(game.current_round);outSecs=0;malusIdx=0;wasOut=false;lastMinuteScored=0;hideZB();updateSubzoneColors(game.current_round);}
           updatePhase();
         }
       }
@@ -2236,8 +2255,8 @@ async function confirmReset(){
     // Create new event
     const evRes=await sbPost('events',{status:'active',current_game:0,created_at:new Date().toISOString()});
     event_=Array.isArray(evRes)?evRes[0]:evRes;
-    // Clear messages (delete all)
-    try{await sb('messages?id=gt.0',{method:'DELETE',headers:{...H,'Prefer':'return=representation'}});}catch(e){}
+    // Clear messages (delete all via created_at filter)
+    try{await sb('messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE'});}catch(e){}
     activeSubzones=[];activeSubzoneId=null;
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
