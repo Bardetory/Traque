@@ -1138,6 +1138,8 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <button class="abtn ok" id="btn-sg" onclick="openLaunchModal()"><span class="ai">&#x25B6;</span> Lancer une partie</button>
       <button class="abtn danger" id="btn-stop" onclick="adminStopGame()" disabled><span class="ai">&#x23F9;</span> Arreter la partie</button>
       <button class="abtn danger" onclick="openResetModal()" style="margin-top:8px"><span class="ai">🔄</span> Nouvel evenement (reset)</button>
+      <button class="abtn" id="btn-next-phase" onclick="adminNextPhase()" disabled style="margin-top:8px;border-color:rgba(255,184,48,.4);color:var(--amber)"><span class="ai">⏭</span> Phase suivante</button>
+      <div id="btn-next-phase-label" style="font-family:monospace;font-size:9px;color:var(--text-dim);margin-top:4px;letter-spacing:1px;text-align:center"></div>
     </div>
     <div class="asec" id="admin-subzones-sec" style="display:none">
       <div class="asectitle">Modifier sous-zones en cours</div>
@@ -1662,6 +1664,43 @@ function updateSubzoneDisplay(r){
     });
     mapLayers.activeSubzoneLayer=lg;
   }
+  updateSubzoneColors(r);
+}
+
+function updateSubzoneColors(r){
+  // When game active + zone chosen: grey out subzones not in active list
+  if(!game||game.status!=='active'||!gameConfig.zone){
+    // Reset all to normal color
+    Object.entries(mapLayers.zoneFamilies||{}).forEach(([fam,layer])=>{
+      if(!layer)return;
+      const col=ZONE_FAMILY_COLORS[fam]||'#7fff4f';
+      layer.setStyle({color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07});
+    });
+    return;
+  }
+  // Grey inactive zones in the active zone family
+  const activeFam=gameConfig.zone;
+  Object.entries(mapLayers.zoneFamilies||{}).forEach(([fam,layer])=>{
+    if(!layer)return;
+    if(fam!==activeFam){
+      // Not selected family: grey dim
+      layer.setStyle({color:'rgba(100,100,100,0.3)',weight:1,dashArray:'4 4',fillColor:'rgba(80,80,80,0.1)',fillOpacity:0.04});
+    } else {
+      // Active family: color active subzones normally, grey inactive ones
+      layer.eachLayer(sublayer=>{
+        const zname=sublayer.feature?.properties?.zone_name;
+        const zv=ZONE_POLYS_VISUAL.find(z=>z.name===zname&&z.family===fam);
+        if(!zv)return;
+        const col=ZONE_FAMILY_COLORS[fam]||'#7fff4f';
+        const isActive=(r<3)||activeSubzones.includes(zv.id);
+        if(isActive){
+          sublayer.setStyle({color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07});
+        } else {
+          sublayer.setStyle({color:'rgba(80,80,80,0.4)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.15)',fillOpacity:0.08});
+        }
+      });
+    }
+  });
 }
 
 async function autoNextRound(){
@@ -1675,7 +1714,7 @@ async function autoNextRound(){
     await sbPost('messages',{type:'announce',content:msgs[nr],game_id:game.id});
     timerSec=ROUND_DUR[nr];lastMinuteScored=0;
     showRoundOverlay(nr);outSecs=0;malusIdx=0;wasOut=false;hideZB();updatePhase();
-    updateSubzoneBanner();
+    updateSubzoneBanner();updateNextPhaseLabel();
     // Trigger SZ picker for hunters at end of M2 (for M3) and M3 (for M4)
     if((nr===3||nr===4)&&CU&&CU.type==='team'&&CU.role==='chasseur'){
       // Wait 2s then show picker
@@ -2197,8 +2236,8 @@ async function confirmReset(){
     // Create new event
     const evRes=await sbPost('events',{status:'active',current_game:0,created_at:new Date().toISOString()});
     event_=Array.isArray(evRes)?evRes[0]:evRes;
-    // Clear messages
-    await sb('messages',{method:'DELETE'});
+    // Clear messages (delete all)
+    try{await sb('messages?id=gt.0',{method:'DELETE',headers:{...H,'Prefer':'return=representation'}});}catch(e){}
     activeSubzones=[];activeSubzoneId=null;
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
@@ -2344,6 +2383,73 @@ async function adminSaveSubzones(){
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
+
+// ══ PHASE SUIVANTE (admin test) ════════════════════════════════════════════
+// 6 phases: 1=M1, 2=M2, 3=SZpicker(M2→M3), 4=M3, 5=SZpicker(M3→M4), 6=M4
+function getCurrentPhase(){
+  if(!game||game.status!=='active')return 0;
+  const r=game.current_round||0;
+  // If SZ picker is open: we're in the picker phase
+  if(document.getElementById('sz-picker-modal').style.display==='flex'){
+    return r===2?3:5; // picker after M2 = phase3, picker after M3 = phase5
+  }
+  return r; // M1=1, M2=2, M3=4(→shown as 4), M4=6
+  // Actually map: r1→phase1, r2→phase2, r3→phase4, r4→phase6
+  // picker M2→M3 = phase3, picker M3→M4 = phase5
+}
+
+function getPhaseLabel(p){
+  const labels={1:'Manche 1 (Cache)',2:'Manche 2 (Libre)',3:'→ Choix sous-zone (M3)',4:'Manche 3 (Sous-zones)',5:'→ Choix sous-zone (M4)',6:'Manche 4 (Final)'};
+  return labels[p]||'?';
+}
+
+function updateNextPhaseLabel(){
+  const el=document.getElementById('btn-next-phase-label');
+  if(!el)return;
+  if(!game||game.status!=='active'){el.textContent='';return;}
+  const r=game.current_round||0;
+  const szOpen=document.getElementById('sz-picker-modal').style.display==='flex';
+  let nextLabel='';
+  if(szOpen){
+    nextLabel='→ Valider + passer manche suivante';
+  } else if(r===1){nextLabel='→ '+getPhaseLabel(2);}
+  else if(r===2){nextLabel='→ '+getPhaseLabel(3);}
+  else if(r===3){nextLabel='→ '+getPhaseLabel(5);}
+  else if(r===4){nextLabel='→ Fin de partie';}
+  else nextLabel='';
+  el.textContent=nextLabel?'Suivant : '+nextLabel:'';
+}
+
+async function adminNextPhase(){
+  if(!game||game.status!=='active')return;
+  const r=game.current_round||0;
+  const szOpen=document.getElementById('sz-picker-modal').style.display==='flex';
+
+  if(szOpen){
+    // Close picker without penalty, apply with random pick if none chosen
+    if(!szPickerSelected&&activeSubzones.length>0){
+      szPickerSelected=activeSubzones[Math.floor(Math.random()*activeSubzones.length)];
+    }
+    await applySZPick(false);
+    updateNextPhaseLabel();
+    return;
+  }
+
+  if(r===2||r===3){
+    // Trigger SZ picker phase (simulate the 3min warning)
+    if(activeSubzones.length>=2){
+      openSZPicker(r);
+      updateNextPhaseLabel();
+      return;
+    }
+  }
+
+  // Otherwise advance to next round
+  timerSec=1; // force timer to hit 0 on next tick → autoNextRound
+  updateNextPhaseLabel();
+  toast('⏭','Admin','Passage a la phase suivante...');
+}
+
 async function adminActivateSubzone(){} // legacy stub
 async function adminStartGame(){
   if(!event_){toast('!','Admin','Aucun evenement');return;}
@@ -2365,9 +2471,13 @@ async function adminStartGame(){
     await sbPost('messages',{type:'announce',content:'Partie '+gn+' demarree ! Chasseurs : '+hunterNames+'. Zone : '+gameConfig.zone+'. Manche 1 : CACHE (5 min)',game_id:game.id});
     toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);timerSec=ROUND_DUR[1];lastMinuteScored=0;
     updatePhase();startZoneCheck();startScoreEngine();
-    document.getElementById('btn-stop').disabled=false;buildTeams();buildAdminSZEdit();
+    document.getElementById('btn-stop').disabled=false;
+    document.getElementById('btn-next-phase').disabled=false;
+    updateNextPhaseLabel();
+    buildTeams();buildAdminSZEdit();
     // Show subzone admin section
     const s=document.getElementById('admin-subzones-sec');if(s)s.style.display='block';
+    updateSubzoneColors(1);
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
@@ -2381,7 +2491,7 @@ async function adminStopGame(){
     game.status='finished';
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
-    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;updatePhase();
+    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;document.getElementById('btn-next-phase').disabled=true;document.getElementById('btn-next-phase-label').textContent='';updateSubzoneColors(0);updatePhase();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
