@@ -844,6 +844,64 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 .tsel option{background:var(--forest-mid)}
 .tinput{width:100%;background:var(--forest);border:1px solid var(--border);border-radius:2px;padding:10px 12px;color:var(--text);font-family:monospace;font-size:13px;margin-bottom:8px;outline:none}
 .tinput:focus{border-color:var(--acid-dim)}
+
+/* ── LAUNCH MODAL ── */
+#launch-modal{position:fixed;inset:0;z-index:950;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.92);backdrop-filter:blur(6px);overflow-y:auto;padding:20px 0 40px}
+.launch-box{background:var(--forest-mid);border:1px solid var(--border);border-radius:2px;padding:24px;width:calc(100% - 32px);max-width:380px;margin:auto}
+.launch-title{font-size:18px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--acid);margin-bottom:6px;display:block}
+.launch-sub{font-family:monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--text-dim);margin-bottom:20px;display:block}
+.launch-sec{margin-bottom:18px}
+.launch-sec-title{font-family:monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+.team-check-row{display:flex;align-items:center;padding:9px 11px;background:var(--forest);border:1px solid var(--border);border-radius:2px;margin-bottom:5px;gap:10px;cursor:pointer;transition:border-color .15s}
+.team-check-row.sel{border-color:rgba(255,184,48,.5);background:rgba(255,184,48,.06)}
+.team-check-row .tind{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.team-check-label{font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;flex:1}
+.team-check-mark{font-size:16px;color:var(--amber);display:none}
+.team-check-row.sel .team-check-mark{display:block}
+.zone-family-btn{display:flex;align-items:center;padding:10px 12px;background:var(--forest);border:1px solid var(--border);border-radius:2px;margin-bottom:5px;cursor:pointer;gap:10px;transition:border-color .15s}
+.zone-family-btn.sel{border-color:var(--acid-dim)}
+.zone-family-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.zone-family-name{font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;flex:1}
+.zone-family-mark{font-size:14px;color:var(--acid);display:none}
+.zone-family-btn.sel .zone-family-mark{display:block}
+.subzone-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:8px}
+.sz-btn{background:var(--forest);border:1px solid var(--border);border-radius:2px;padding:8px 4px;text-align:center;font-family:monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);cursor:pointer;transition:all .15s}
+.sz-btn.sel{border-color:var(--amber);color:var(--amber);background:rgba(255,184,48,.08)}
+.launch-go{width:100%;background:var(--acid);border:none;border-radius:2px;padding:14px;font-size:15px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--forest);cursor:pointer;margin-top:8px;transition:opacity .2s}
+.launch-go:disabled{opacity:.4;cursor:not-allowed}
+.launch-cancel{width:100%;background:none;border:1px solid var(--border);border-radius:2px;padding:11px;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);cursor:pointer;margin-top:6px}
+
+/* ── SUBZONE PICKER (chasseurs) ── */
+#sz-picker-modal{position:fixed;inset:0;z-index:960;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.95);backdrop-filter:blur(8px)}
+.sz-picker-box{background:var(--forest-mid);border:1px solid rgba(255,184,48,.5);border-radius:2px;padding:24px;width:calc(100% - 32px);max-width:360px}
+.sz-picker-title{font-size:16px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--amber);margin-bottom:6px;display:block}
+.sz-picker-timer{font-family:monospace;font-size:36px;font-weight:700;color:var(--red);display:block;text-align:center;margin:12px 0;animation:blink .5s infinite}
+.sz-picker-sub{font-size:12px;color:var(--text-dim);line-height:1.5;margin-bottom:14px}
+.sz-picker-zones{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.sz-picker-zone{padding:11px 13px;background:var(--forest);border:1px solid var(--border);border-radius:2px;font-family:monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);cursor:pointer;transition:all .15s;text-align:center}
+.sz-picker-zone.sel{border-color:var(--amber);color:var(--amber);background:rgba(255,184,48,.1)}
+.sz-picker-zone.eliminated{opacity:.35;pointer-events:none;text-decoration:line-through}
+.sz-picker-confirm{width:100%;background:var(--amber);border:none;border-radius:2px;padding:13px;font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--forest);cursor:pointer}
+.sz-picker-confirm:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── ACTIVE SUBZONES BANNER (all players) ── */
+#subzone-banner{position:absolute;top:62px;left:50%;transform:translateX(-50%);z-index:500;pointer-events:none;display:none;white-space:nowrap}
+.szb-box{background:rgba(21,43,23,.95);border:1px solid rgba(255,184,48,.5);border-radius:2px;padding:7px 16px;text-align:center}
+.szb-label{font-family:monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--amber);display:block}
+.szb-zones{font-family:monospace;font-size:12px;font-weight:700;color:var(--text);display:block}
+.szb-timer{font-family:monospace;font-size:11px;color:var(--red);display:block;margin-top:2px}
+
+/* ── RESET EVENT CONFIRM ── */
+#reset-event-modal{position:fixed;inset:0;z-index:970;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.9);backdrop-filter:blur(6px)}
+.reset-box{background:var(--forest-mid);border:2px solid var(--red);border-radius:2px;padding:28px 24px;width:calc(100% - 40px);max-width:340px;text-align:center}
+.reset-icon{font-size:40px;display:block;margin-bottom:12px}
+.reset-title{font-size:16px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--red);margin-bottom:10px;display:block}
+.reset-desc{font-size:13px;color:var(--text-dim);line-height:1.6;margin-bottom:20px}
+.reset-confirm-input{width:100%;background:var(--forest);border:1px solid var(--red);border-radius:2px;padding:10px 12px;color:var(--text);font-family:monospace;font-size:13px;margin-bottom:12px;outline:none;text-align:center}
+.reset-btns{display:flex;gap:8px}
+.reset-btn-ok{flex:1;padding:12px;background:var(--red);border:none;border-radius:2px;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#fff;cursor:pointer;opacity:.5}
+.reset-btn-ok.active{opacity:1}
+.reset-btn-cancel{flex:1;padding:12px;background:var(--forest);border:1px solid var(--border);border-radius:2px;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);cursor:pointer}
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
@@ -983,6 +1041,65 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 
 <div id="toasts"></div>
 
+<!-- LAUNCH MODAL -->
+<div id="launch-modal">
+  <div class="launch-box">
+    <span class="launch-title">🎮 Lancer une partie</span>
+    <span class="launch-sub">Configurez la partie avant de demarrer</span>
+    <div class="launch-sec">
+      <div class="launch-sec-title">Equipes chasseurs (les autres sont chasses)</div>
+      <div id="launch-hunter-list"></div>
+    </div>
+    <div class="launch-sec">
+      <div class="launch-sec-title">Zone de jeu</div>
+      <div id="launch-zone-list"></div>
+    </div>
+    <div class="launch-sec" id="launch-subzone-sec" style="display:none">
+      <div class="launch-sec-title">Choisissez 3 sous-zones (pour manches 3 &amp; 4)</div>
+      <div class="subzone-grid" id="launch-subzone-grid"></div>
+      <div id="launch-sz-count" style="font-family:monospace;font-size:10px;color:var(--text-dim);margin-top:6px;text-align:center">0 / 3 selectionnees</div>
+    </div>
+    <button class="launch-go" id="launch-go-btn" onclick="launchGameConfirm()" disabled>GO — Lancer la partie</button>
+    <button class="launch-cancel" onclick="closeLaunchModal()">Annuler</button>
+  </div>
+</div>
+
+<!-- SUBZONE PICKER MODAL (chasseurs) -->
+<div id="sz-picker-modal">
+  <div class="sz-picker-box">
+    <span class="sz-picker-title">⚔️ Choisissez une sous-zone a supprimer</span>
+    <span class="sz-picker-timer" id="sz-picker-timer">3:00</span>
+    <p class="sz-picker-sub">Les chasseurs doivent supprimer une sous-zone.<br>Les chassés devront etre dans les 2 restantes.</p>
+    <div class="sz-picker-zones" id="sz-picker-zones"></div>
+    <button class="sz-picker-confirm" id="sz-picker-confirm-btn" onclick="confirmSubzonePick()" disabled>Confirmer la suppression</button>
+  </div>
+</div>
+
+<!-- SUBZONE BANNER -->
+<div id="subzone-banner">
+  <div class="szb-box">
+    <span class="szb-label">Sous-zones actives</span>
+    <span class="szb-zones" id="szb-zones-text">—</span>
+    <span class="szb-timer" id="szb-timer-text"></span>
+  </div>
+</div>
+
+<!-- RESET EVENT MODAL -->
+<div id="reset-event-modal">
+  <div class="reset-box">
+    <span class="reset-icon">⚠️</span>
+    <span class="reset-title">Nouvel evenement</span>
+    <p class="reset-desc">Cette action reinitialisera TOUT : scores, eliminations, badges, manches. Irreversible.</p>
+    <p style="font-size:11px;color:var(--amber);margin-bottom:12px;font-family:monospace">Tapez RESET pour confirmer</p>
+    <input class="reset-confirm-input" id="reset-confirm-input" type="text" placeholder="RESET" oninput="checkResetInput()">
+    <div class="reset-btns">
+      <button class="reset-btn-cancel" onclick="closeResetModal()">Annuler</button>
+      <button class="reset-btn-ok" id="reset-btn-ok" onclick="confirmReset()" disabled>Confirmer</button>
+    </div>
+  </div>
+</div>
+
+
 <div class="drawer" id="d-scores">
   <div class="doverlay" onclick="closeDrawer('scores')"></div>
   <div class="dpanel">
@@ -1018,8 +1135,15 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
     <div style="margin:8px 0 20px"><div class="dtitle">Panneau Admin</div></div>
     <div class="asec">
       <div class="asectitle">Controle de partie</div>
-      <button class="abtn ok" id="btn-sg" onclick="adminStartGame()"><span class="ai">&#x25B6;</span> Lancer une partie</button>
+      <button class="abtn ok" id="btn-sg" onclick="openLaunchModal()"><span class="ai">&#x25B6;</span> Lancer une partie</button>
       <button class="abtn danger" id="btn-stop" onclick="adminStopGame()" disabled><span class="ai">&#x23F9;</span> Arreter la partie</button>
+      <button class="abtn danger" onclick="openResetModal()" style="margin-top:8px"><span class="ai">🔄</span> Nouvel evenement (reset)</button>
+    </div>
+    <div class="asec" id="admin-subzones-sec" style="display:none">
+      <div class="asectitle">Modifier sous-zones en cours</div>
+      <div id="admin-active-subzones" style="font-family:monospace;font-size:10px;color:var(--amber);margin-bottom:8px;letter-spacing:1px">Aucune sous-zone active</div>
+      <div class="subzone-grid" id="admin-sz-edit-grid"></div>
+      <button class="abtn ok" style="margin-top:8px" onclick="adminSaveSubzones()"><span class="ai">💾</span> Sauvegarder</button>
     </div>
     <div class="asec">
       <div class="asectitle">Decouverte manuelle (litige)</div>
@@ -1054,18 +1178,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <div class="asectitle">Visibilite</div>
       <button class="abtn" onclick="adminToggleCount()"><span id="tc-lbl">Masquer nb equipes</span></button>
     </div>
-    <div class="asec">
-      <div class="asectitle">Sous-zone Manche 3</div>
-      <select class="tsel" id="subzone-select">
-        <optgroup label="L usine"><option value="P">L usine P</option><option value="Q">L usine Q</option><option value="R">L usine R</option><option value="S">L usine S</option></optgroup>
-        <optgroup label="La bordure"><option value="M">La bordure M</option><option value="N">La bordure N</option><option value="O">La bordure O</option></optgroup>
-        <optgroup label="La lisière"><option value="A">La lisière A</option><option value="B">La lisière B</option><option value="C">La lisière C</option><option value="D">La lisière D</option><option value="E">La lisière E</option><option value="F">La lisière F</option></optgroup>
-        <optgroup label="Le lac"><option value="T">Le lac T</option><option value="U">Le lac U</option><option value="V">Le lac V</option><option value="W">Le lac W</option><option value="X">Le lac X</option><option value="Y">Le lac Y</option></optgroup>
-        <optgroup label="Le marais"><option value="G">Le marais G</option><option value="H">Le marais H</option><option value="I">Le marais I</option><option value="J">Le marais J</option><option value="K">Le marais K</option><option value="L">Le marais L</option></optgroup>
-      </select>
-      <button class="abtn ok" onclick="adminActivateSubzone()"><span class="ai">&#x1F4CD;</span> Activer cette sous-zone</button>
-      <div id="active-subzone-display" style="font-family:monospace;font-size:10px;color:var(--text-dim);margin-top:6px;letter-spacing:1px">Aucune sous-zone active</div>
-    </div>
+
     <div class="asec">
       <div class="asectitle">Fin d evenement</div>
       <button class="abtn ok" onclick="adminEndEvent()"><span class="ai">🏆</span> Distribuer points badges</button>
@@ -1100,6 +1213,14 @@ const ZONE_POLYS_VISUAL=[{"id":"P","name":"L usine P","family":"L usine","color"
 const ZONE_FAMILY_COLORS={"L usine": "#e879f9", "La bordure": "#f97316", "La lisi\u00e8re": "#7fff4f", "Le lac": "#facc15", "Le marais": "#38bdf8"};
 const LIMITE_POLY=[[2.670054, 48.772942], [2.669988, 48.773589], [2.66998, 48.773595], [2.66997, 48.773598], [2.669855, 48.774143], [2.669821, 48.774214], [2.669611, 48.774316], [2.669466, 48.774437], [2.669039, 48.774959], [2.669152, 48.775137], [2.669297, 48.775261], [2.669297, 48.77526], [2.669543, 48.775721], [2.669799, 48.775998], [2.669754, 48.776126], [2.669202, 48.776431], [2.669104, 48.776547], [2.669153, 48.776629], [2.669113, 48.776835], [2.669106, 48.777046], [2.668213, 48.776891], [2.667259, 48.780252], [2.667, 48.780366], [2.665911, 48.780511], [2.66331, 48.780525], [2.663031, 48.780447], [2.66294, 48.780471], [2.662667, 48.781387], [2.66246, 48.781493], [2.66222, 48.781602], [2.661836, 48.78177], [2.661273, 48.781981], [2.660969, 48.782118], [2.660887, 48.782153], [2.660769, 48.782201], [2.660634, 48.782248], [2.660393, 48.782329], [2.660164, 48.782396], [2.659892, 48.782492], [2.659444, 48.782708], [2.658782, 48.783254], [2.658684, 48.783377], [2.658574, 48.783577], [2.658489, 48.783742], [2.658392, 48.783985], [2.658789, 48.783959], [2.65897, 48.783881], [2.659157, 48.78382], [2.659793, 48.783647], [2.660067, 48.783817], [2.660365, 48.783749], [2.660683, 48.783561], [2.660751, 48.783307], [2.661179, 48.783363], [2.661309, 48.783455], [2.661543, 48.783435], [2.661525, 48.78325], [2.661738, 48.782995], [2.662021, 48.782828], [2.662228, 48.783052], [2.662623, 48.782958], [2.662913, 48.78277], [2.663284, 48.782958], [2.663503, 48.783222], [2.66387, 48.783222], [2.66391, 48.783197], [2.663999, 48.783143], [2.6641, 48.783081], [2.664313, 48.782844], [2.664743, 48.7829], [2.665026, 48.784522], [2.665549, 48.784488], [2.665853, 48.786126], [2.666492, 48.786085], [2.666641, 48.786952], [2.666632, 48.78708], [2.671906, 48.786638], [2.672032, 48.78662], [2.672108, 48.78658], [2.673926393139103, 48.78787252103327], [2.678657424357185, 48.786324539883694], [2.679556435668064, 48.78601127680033], [2.681812577889774, 48.78468354393867], [2.682722969090662, 48.78401086599579], [2.683615, 48.783279], [2.682501, 48.78192], [2.681951, 48.781261], [2.681683, 48.780928], [2.68143, 48.780595], [2.678335, 48.780905], [2.677161, 48.779224], [2.676562, 48.779385], [2.676291, 48.779456], [2.675961, 48.779007], [2.675958, 48.779006], [2.675842, 48.778797], [2.675621, 48.778736], [2.675726, 48.778417], [2.675493, 48.778362], [2.675622, 48.77811], [2.676592, 48.777935], [2.676426, 48.77707], [2.675928, 48.776887], [2.675893, 48.776429], [2.674963, 48.776747], [2.67368, 48.774893], [2.674082, 48.774575], [2.673844, 48.774418], [2.673532, 48.77396], [2.673155, 48.773283], [2.673296, 48.772925], [2.673568, 48.77235], [2.673653, 48.771939], [2.673653, 48.77193900000012], [2.67083, 48.771629], [2.670729, 48.772967], [2.670054, 48.772942]];
 let activeSubzoneId=null;
+// New v13 state
+let gameConfig={hunters:[],zone:null,subzones:[]}; // 3 subzones chosen at launch
+let activeSubzones=[];     // current active subzones (starts with 3, then 2, then 1)
+let szPickerTimer=null;    // interval for subzone picker countdown
+let szPickerSecs=180;      // 3 min countdown
+let szPickerRound=0;       // which round triggered the picker (2 or 3)
+let szPickerSelected=null; // subzone id selected to eliminate
+let szTimerAnnounced=false;
 
 const SB_URL='https://nbnjgwsokrqcxokhhzvt.supabase.co';
 const SB_KEY='sb_publishable_yjIlJEaotxyRpa-bWXscgQ_9r5IIDP6';
@@ -1151,7 +1272,10 @@ function isInZone(lat,lng){
   if(!game||game.status!=='active')return true;
   const r=game.current_round||0;
   if(r===1)return true;
-  if(r===3&&activeSubzoneId){const zone=ZONE_POLYS.find(z=>z.id===activeSubzoneId);if(zone)return pip(lat,lng,zone.coords);}
+  // Rounds 3 & 4: must be in one of the active subzones
+  if((r===3||r===4)&&activeSubzones.length>0){
+    return activeSubzones.some(zid=>{const zone=ZONE_POLYS.find(z=>z.id===zid);return zone&&pip(lat,lng,zone.coords);});
+  }
   return pip(lat,lng,LIMITE_POLY);
 }
 
@@ -1497,10 +1621,20 @@ function startTimer(){
     if(!game||game.status!=='active')return;
     if(timerSec>0){
       timerSec--;
-      if(timerSec===180&&(game.current_round||0)===2){
-        sbPost('messages',{type:'announce',content:'ATTENTION : Sous-zone dans 3 minutes ! Preparez-vous.',game_id:game.id});
-        toast('!','Annonce','Sous-zone dans 3 minutes !');
+      const cr2=game.current_round||0;
+      // At 3min remaining in M2: notify + open SZ picker for hunters
+      if(timerSec===180&&cr2===2){
+        sbPost('messages',{type:'announce',content:'ATTENTION : Choisissez la sous-zone a supprimer ! Les chasseurs ont 3 minutes.',game_id:game.id});
+        toast('!','Sous-zones','Les chasseurs choisissent la sous-zone a supprimer');
         if(navigator.vibrate)navigator.vibrate([200,100,200]);
+        if(CU&&CU.type==='team'&&CU.role==='chasseur') openSZPicker(2);
+      }
+      // At 3min remaining in M3: same for M4
+      if(timerSec===180&&cr2===3){
+        sbPost('messages',{type:'announce',content:'ATTENTION : Choisissez la sous-zone a supprimer pour la manche 4 !',game_id:game.id});
+        toast('!','Sous-zones','Les chasseurs choisissent la sous-zone a supprimer');
+        if(navigator.vibrate)navigator.vibrate([200,100,200]);
+        if(CU&&CU.type==='team'&&CU.role==='chasseur') openSZPicker(3);
       }
       renderTimer();
     }else{if(CU.type==='admin')autoNextRound();}
@@ -1510,6 +1644,24 @@ function startTimer(){
 function renderTimer(){
   const m=String(Math.floor(timerSec/60)).padStart(2,'0'),s=String(timerSec%60).padStart(2,'0');
   const el=document.getElementById('ptimer');el.textContent=m+':'+s;el.classList.toggle('urg',timerSec<=60&&timerSec>0);
+}
+
+
+function updateSubzoneDisplay(r){
+  if(!leafMap)return;
+  if(mapLayers.activeSubzoneLayer){
+    if(typeof mapLayers.activeSubzoneLayer.clearLayers==='function')mapLayers.activeSubzoneLayer.clearLayers();
+    else leafMap.removeLayer(mapLayers.activeSubzoneLayer);
+    mapLayers.activeSubzoneLayer=null;
+  }
+  if((r===3||r===4)&&activeSubzones.length>0){
+    const lg=L.layerGroup().addTo(leafMap);
+    activeSubzones.forEach(zid=>{
+      const zp=ZONE_POLYS.find(z=>z.id===zid);
+      if(zp)L.geoJSON({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[zp.coords]}},{style:{color:'rgba(255,184,48,1)',weight:3,dashArray:'8 4',fillColor:'rgba(255,184,48,0.18)',fillOpacity:1}}).addTo(lg);
+    });
+    mapLayers.activeSubzoneLayer=lg;
+  }
 }
 
 async function autoNextRound(){
@@ -1523,6 +1675,12 @@ async function autoNextRound(){
     await sbPost('messages',{type:'announce',content:msgs[nr],game_id:game.id});
     timerSec=ROUND_DUR[nr];lastMinuteScored=0;
     showRoundOverlay(nr);outSecs=0;malusIdx=0;wasOut=false;hideZB();updatePhase();
+    updateSubzoneBanner();
+    // Trigger SZ picker for hunters at end of M2 (for M3) and M3 (for M4)
+    if((nr===3||nr===4)&&CU&&CU.type==='team'&&CU.role==='chasseur'){
+      // Wait 2s then show picker
+      setTimeout(()=>openSZPicker(nr-1),2000);
+    }
   }catch(e){game._adv=false;}
 }
 
@@ -1534,8 +1692,7 @@ function showRoundOverlay(r){
   document.getElementById('ro-desc').textContent=ROUND_DESC[r]||'';
   ov.style.display='flex';
   if(leafMap){
-    if(r===3&&activeSubzoneId)showActiveSubzone(activeSubzoneId);
-    else if(r!==3&&mapLayers.activeSubzoneLayer){leafMap.removeLayer(mapLayers.activeSubzoneLayer);mapLayers.activeSubzoneLayer=null;}
+    updateSubzoneDisplay(r);
   }
   let c=5;const cd=document.getElementById('ro-countdown');cd.textContent=c;
   const ti=setInterval(()=>{c--;cd.textContent=c;if(c<=0){clearInterval(ti);ov.style.display='none';}},1000);
@@ -1549,8 +1706,7 @@ function updatePhase(){
   lbl.textContent='Manche '+r+' . Partie '+game.game_number;
   nm.textContent=ROUND_NAMES[r]||'En cours';tm.className='ptimer';
   if(leafMap){
-    if(r===3&&activeSubzoneId)showActiveSubzone(activeSubzoneId);
-    else if(r!==3&&mapLayers.activeSubzoneLayer){leafMap.removeLayer(mapLayers.activeSubzoneLayer);mapLayers.activeSubzoneLayer=null;}
+    updateSubzoneDisplay(r);
   }
   if(game.round_started_at){const el=Math.floor((Date.now()-new Date(game.round_started_at).getTime())/1000);timerSec=Math.max(0,ROUND_DUR[r]-el);}
 }
@@ -1568,7 +1724,19 @@ function startPolling(){
         if(Array.isArray(gd)){
           const wasA=game&&game.status==='active',prevR=game?.current_round;
           game=gd.length?gd[0]:null;
-          if(game?.active_subzone&&game.active_subzone!==activeSubzoneId){activeSubzoneId=game.active_subzone;if((game.current_round||0)===3)showActiveSubzone(activeSubzoneId);const _z=ZONE_POLYS.find(x=>x.id===activeSubzoneId);if(_z)toast('📍','Sous-zone',_z.name+' activee !');}
+          if(game?.active_subzone){
+            const newSZs=game.active_subzone?game.active_subzone.split(',').filter(Boolean):[];
+            const changed=JSON.stringify(newSZs)!==JSON.stringify(activeSubzones);
+            if(changed){
+              activeSubzones=newSZs;activeSubzoneId=activeSubzones[0]||null;
+              const r2=game.current_round||0;
+              updateSubzoneDisplay(r2);updateSubzoneBanner();
+              if(newSZs.length>0){
+                const names=newSZs.map(z=>ZONE_POLYS.find(x=>x.id===z)?.name||z).join(' + ');
+                toast('📍','Sous-zones',names+' actives');
+              }
+            }
+          }
           if(!wasA&&game){toast('!','Partie','La partie a commence!');showRoundOverlay(1);startZoneCheck();startScoreEngine();}
           if(game&&prevR&&game.current_round!==prevR){showRoundOverlay(game.current_round);outSecs=0;malusIdx=0;wasOut=false;lastMinuteScored=0;hideZB();}
           updatePhase();
@@ -1924,32 +2092,282 @@ async function adminValidateDiscovery(){
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
-async function adminActivateSubzone(){
-  const zid=document.getElementById('subzone-select').value;
-  const zone=ZONE_POLYS.find(z=>z.id===zid);
-  if(!zone){toast('!','Erreur','Zone introuvable');return;}
-  activeSubzoneId=zid;showActiveSubzone(zid);
-  document.getElementById('active-subzone-display').textContent='Active : '+zone.name;
-  document.getElementById('active-subzone-display').style.color='var(--amber)';
-  if(game){try{
-    await sbPatch('games?id=eq.'+game.id,{active_subzone:zid});
-    await sbPost('messages',{type:'announce',content:'Sous-zone : '+zone.name+' — Rejoignez-la immediatement !',game_id:game.id});
-  }catch(e){}}
-  toast('📍','Sous-zone',zone.name+' activee !');closeDrawer('admin');
+
+// ══ LAUNCH MODAL ══════════════════════════════
+function openLaunchModal(){
+  // Build hunter checkboxes
+  const hl=document.getElementById('launch-hunter-list');
+  hl.innerHTML=teams.map(t=>`<div class="team-check-row" id="lhunt-${t.id}" onclick="toggleLaunchHunter('${t.id}')"><div class="tind" style="background:${t.color}"></div><span class="team-check-label">${t.name}</span><span class="team-check-mark">✓</span></div>`).join('');
+  gameConfig.hunters=[];
+
+  // Build zone family selector
+  const zl=document.getElementById('launch-zone-list');
+  zl.innerHTML=Object.entries(ZONE_FAMILY_COLORS).map(([fam,col])=>`<div class="zone-family-btn" id="lzone-${fam.replace(/ /g,'_')}" onclick="selectLaunchZone('${fam}')"><div class="zone-family-dot" style="background:${col}"></div><span class="zone-family-name">${fam}</span><span class="zone-family-mark">✓</span></div>`).join('');
+  gameConfig.zone=null;gameConfig.subzones=[];
+
+  document.getElementById('launch-subzone-sec').style.display='none';
+  document.getElementById('launch-go-btn').disabled=true;
+  document.getElementById('launch-modal').style.display='flex';
 }
+
+function toggleLaunchHunter(teamId){
+  const el=document.getElementById('lhunt-'+teamId);
+  if(gameConfig.hunters.includes(teamId)){
+    gameConfig.hunters=gameConfig.hunters.filter(x=>x!==teamId);
+    el.classList.remove('sel');
+  } else {
+    gameConfig.hunters.push(teamId);
+    el.classList.add('sel');
+  }
+  checkLaunchReady();
+}
+
+function selectLaunchZone(fam){
+  gameConfig.zone=fam;gameConfig.subzones=[];
+  document.querySelectorAll('.zone-family-btn').forEach(el=>el.classList.remove('sel'));
+  const key='lzone-'+fam.replace(/ /g,'_');
+  const el=document.getElementById(key);if(el)el.classList.add('sel');
+  // Build subzone grid for this family
+  const zonesInFamily=ZONE_POLYS_VISUAL.filter(z=>z.family===fam);
+  const grid=document.getElementById('launch-subzone-grid');
+  grid.innerHTML=zonesInFamily.map(z=>`<div class="sz-btn" id="lsz-${z.id}" onclick="toggleLaunchSZ('${z.id}')">${z.id}</div>`).join('');
+  document.getElementById('launch-sz-count').textContent='0 / 3 selectionnees';
+  document.getElementById('launch-subzone-sec').style.display='block';
+  checkLaunchReady();
+}
+
+function toggleLaunchSZ(zid){
+  const idx=gameConfig.subzones.indexOf(zid);
+  if(idx>=0){
+    gameConfig.subzones.splice(idx,1);
+    document.getElementById('lsz-'+zid).classList.remove('sel');
+  } else {
+    if(gameConfig.subzones.length>=3)return; // max 3
+    gameConfig.subzones.push(zid);
+    document.getElementById('lsz-'+zid).classList.add('sel');
+  }
+  document.getElementById('launch-sz-count').textContent=gameConfig.subzones.length+' / 3 selectionnees';
+  checkLaunchReady();
+}
+
+function checkLaunchReady(){
+  const ok=gameConfig.hunters.length>0&&gameConfig.zone&&gameConfig.subzones.length===3;
+  document.getElementById('launch-go-btn').disabled=!ok;
+}
+
+function closeLaunchModal(){
+  document.getElementById('launch-modal').style.display='none';
+}
+
+async function launchGameConfirm(){
+  if(!gameConfig.hunters.length||!gameConfig.zone||gameConfig.subzones.length!==3)return;
+  closeLaunchModal();
+  await adminStartGame();
+}
+
+// ══ RESET EVENT ════════════════════════════════
+function openResetModal(){
+  document.getElementById('reset-confirm-input').value='';
+  document.getElementById('reset-btn-ok').disabled=true;
+  document.getElementById('reset-btn-ok').classList.remove('active');
+  document.getElementById('reset-event-modal').style.display='flex';
+}
+function closeResetModal(){
+  document.getElementById('reset-event-modal').style.display='none';
+}
+function checkResetInput(){
+  const val=document.getElementById('reset-confirm-input').value;
+  const ok=val==='RESET';
+  document.getElementById('reset-btn-ok').disabled=!ok;
+  document.getElementById('reset-btn-ok').classList.toggle('active',ok);
+}
+async function confirmReset(){
+  closeResetModal();
+  try{
+    // Stop current game if any
+    if(game&&game.status==='active'){
+      await sbPatch('games?id=eq.'+game.id,{status:'finished',finished_at:new Date().toISOString()});
+    }
+    game=null;
+    // Reset all teams: scores, eliminations, badges, role to chasse
+    for(const t of teams){
+      await sbPatch('teams?id=eq.'+t.id,{score:0,status:'active',badges:[],role:'chasse'});
+      t.score=0;t.status='active';t.badges=[];t.role='chasse';
+    }
+    // Create new event
+    const evRes=await sbPost('events',{status:'active',current_game:0,created_at:new Date().toISOString()});
+    event_=Array.isArray(evRes)?evRes[0]:evRes;
+    // Clear messages
+    await sb('messages',{method:'DELETE'});
+    activeSubzones=[];activeSubzoneId=null;
+    if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
+    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    if(szPickerTimer){clearInterval(szPickerTimer);szPickerTimer=null;}
+    hideZB();updateSubzoneBanner();updatePhase();buildTeams();
+    toast('🔄','Reset','Nouvel evenement lance !');
+  }catch(e){toast('X','Erreur',''+e.message);}
+}
+
+// ══ SUBZONE PICKER (chasseurs choose which to eliminate) ═══════════════════
+function openSZPicker(round){
+  if(!game||activeSubzones.length<2)return;
+  szPickerRound=round;szPickerSelected=null;szPickerSecs=180;
+  // Build zone list
+  const container=document.getElementById('sz-picker-zones');
+  container.innerHTML=activeSubzones.map(zid=>{
+    const z=ZONE_POLYS.find(x=>x.id===zid);
+    return`<div class="sz-picker-zone" id="szpick-${zid}" onclick="selectSZPick('${zid}')">${z?z.name:zid}</div>`;
+  }).join('');
+  document.getElementById('sz-picker-confirm-btn').disabled=true;
+  document.getElementById('sz-picker-modal').style.display='flex';
+  renderSZPickerTimer();
+  szPickerTimer=setInterval(()=>{
+    szPickerSecs--;
+    if(szPickerSecs<=0){
+      clearInterval(szPickerTimer);szPickerTimer=null;
+      // Auto-pick randomly if not chosen, apply penalty
+      if(!szPickerSelected){
+        szPickerSelected=activeSubzones[Math.floor(Math.random()*activeSubzones.length)];
+      }
+      applySZPick(true); // true = late penalty
+    } else {
+      renderSZPickerTimer();
+    }
+  },1000);
+}
+
+function renderSZPickerTimer(){
+  const m=String(Math.floor(szPickerSecs/60)).padStart(2,'0'),s=String(szPickerSecs%60).padStart(2,'0');
+  document.getElementById('sz-picker-timer').textContent=m+':'+s;
+}
+
+function selectSZPick(zid){
+  szPickerSelected=zid;
+  document.querySelectorAll('.sz-picker-zone').forEach(el=>el.classList.remove('sel'));
+  const el=document.getElementById('szpick-'+zid);if(el)el.classList.add('sel');
+  document.getElementById('sz-picker-confirm-btn').disabled=false;
+}
+
+async function confirmSubzonePick(){
+  if(!szPickerSelected)return;
+  // Check if late (< 1 min remaining on round)
+  const isLate=timerSec<60;
+  if(szPickerTimer){clearInterval(szPickerTimer);szPickerTimer=null;}
+  document.getElementById('sz-picker-modal').style.display='none';
+  await applySZPick(isLate);
+}
+
+async function applySZPick(isLate){
+  document.getElementById('sz-picker-modal').style.display='none';
+  if(szPickerTimer){clearInterval(szPickerTimer);szPickerTimer=null;}
+  // Remove chosen subzone
+  const newSZ=activeSubzones.filter(z=>z!==szPickerSelected);
+  activeSubzones=newSZ;
+  activeSubzoneId=activeSubzones[0]||null; // keep for compat
+  // Penalty if late
+  if(isLate){
+    const hunters=teams.filter(t=>t.role==='chasseur');
+    for(const h of hunters) await addScore(h.id,-100,'Malus sous-zone tardive');
+    // Add 1 min to current round
+    timerSec+=60;
+    toast('⚠️','Malus','-100 pts chasseurs + 1 min de penalite');
+  }
+  // Announce to all
+  const eliminatedZ=ZONE_POLYS.find(z=>z.id===szPickerSelected);
+  const remaining=activeSubzones.map(z=>ZONE_POLYS.find(x=>x.id===z)?.name||z).join(' & ');
+  await sbPost('messages',{type:'announce',content:'Sous-zones actives pour la manche '+(szPickerRound+1)+' : '+remaining+' ('+eliminatedZ?.name+' eliminee)',game_id:game?.id});
+  // Save to game
+  if(game){
+    await sbPatch('games?id=eq.'+game.id,{active_subzone:activeSubzones.join(',')});
+    game.active_subzone=activeSubzones.join(',');
+  }
+  toast('📍','Sous-zones',remaining+' actives');
+  updateSubzoneBanner();
+  if(leafMap){
+    // Show orange highlight for active subzones
+    if(mapLayers.activeSubzoneLayer){leafMap.removeLayer(mapLayers.activeSubzoneLayer);mapLayers.activeSubzoneLayer=null;}
+    activeSubzones.forEach(zid=>{
+      const zp=ZONE_POLYS.find(z=>z.id===zid);if(!zp)return;
+      const l=L.geoJSON({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[zp.coords]}},{style:{color:'rgba(255,184,48,1)',weight:3,dashArray:'8 4',fillColor:'rgba(255,184,48,0.18)',fillOpacity:1}}).addTo(leafMap);
+      // Store all active layers (we override activeSubzoneLayer to just hold a group)
+      if(!mapLayers.activeSubzoneLayer) mapLayers.activeSubzoneLayer=L.layerGroup().addTo(leafMap);
+    });
+  }
+}
+
+function updateSubzoneBanner(){
+  const banner=document.getElementById('subzone-banner');
+  if(!game||game.status!=='active'||activeSubzones.length===0){banner.style.display='none';return;}
+  const r=game.current_round||0;
+  if(r<3){banner.style.display='none';return;}
+  banner.style.display='block';
+  const names=activeSubzones.map(zid=>ZONE_POLYS.find(z=>z.id===zid)?.name||zid);
+  document.getElementById('szb-zones-text').textContent=names.join(' + ');
+}
+
+// ══ ADMIN SUBZONE EDIT ════════════════════════════════════════════════════
+function buildAdminSZEdit(){
+  const sec=document.getElementById('admin-subzones-sec');
+  if(!sec||!gameConfig.zone)return;
+  sec.style.display='block';
+  const info=document.getElementById('admin-active-subzones');
+  if(info) info.textContent=activeSubzones.length?'Actives : '+activeSubzones.join(', '):'Aucune';
+  const grid=document.getElementById('admin-sz-edit-grid');
+  if(!grid)return;
+  const zonesInFamily=ZONE_POLYS.filter(z=>z.family===gameConfig.zone);
+  grid.innerHTML=zonesInFamily.map(z=>`<div class="sz-btn ${activeSubzones.includes(z.id)?'sel':''}" id="admsz-${z.id}" onclick="toggleAdminSZ('${z.id}')">${z.id}</div>`).join('');
+}
+
+function toggleAdminSZ(zid){
+  const idx=activeSubzones.indexOf(zid);
+  if(idx>=0){activeSubzones.splice(idx,1);document.getElementById('admsz-'+zid).classList.remove('sel');}
+  else{activeSubzones.push(zid);document.getElementById('admsz-'+zid).classList.add('sel');}
+  const info=document.getElementById('admin-active-subzones');
+  if(info) info.textContent=activeSubzones.length?'Actives : '+activeSubzones.join(', '):'Aucune';
+}
+
+async function adminSaveSubzones(){
+  if(!game)return;
+  activeSubzoneId=activeSubzones[0]||null;
+  try{
+    await sbPatch('games?id=eq.'+game.id,{active_subzone:activeSubzones.join(',')});
+    game.active_subzone=activeSubzones.join(',');
+    const names=activeSubzones.map(zid=>ZONE_POLYS.find(z=>z.id===zid)?.name||zid).join(', ');
+    await sbPost('messages',{type:'announce',content:'Admin: sous-zones modifiees → '+names,game_id:game.id});
+    toast('💾','Sous-zones','Sauvegardees: '+names);
+    updateSubzoneBanner();
+    // Redraw on map
+    if(mapLayers.activeSubzoneLayer){leafMap.removeLayer(mapLayers.activeSubzoneLayer);mapLayers.activeSubzoneLayer=null;}
+    const lg=L.layerGroup().addTo(leafMap);
+    activeSubzones.forEach(zid=>{const zp=ZONE_POLYS.find(z=>z.id===zid);if(zp)L.geoJSON({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[zp.coords]}},{style:{color:'rgba(255,184,48,1)',weight:3,dashArray:'8 4',fillColor:'rgba(255,184,48,0.18)',fillOpacity:1}}).addTo(lg);});
+    mapLayers.activeSubzoneLayer=lg;
+  }catch(e){toast('X','Erreur',''+e.message);}
+}
+
+async function adminActivateSubzone(){} // legacy stub
 async function adminStartGame(){
   if(!event_){toast('!','Admin','Aucun evenement');return;}
-  try{const gn=(event_.current_game||0)+1;
-    const gd=await sbPost('games',{event_id:event_.id,game_number:gn,status:'active',current_round:1,round_started_at:new Date().toISOString(),started_at:new Date().toISOString()});
+  try{
+    const gn=(event_.current_game||0)+1;
+    // Apply roles from gameConfig
+    for(const t of teams){
+      const role=gameConfig.hunters.includes(t.id)?'chasseur':'chasse';
+      await sbPatch('teams?id=eq.'+t.id,{role,status:'active',score:0});
+      t.role=role;t.status='active';t.score=0;
+    }
+    // Set active subzones (start with all 3)
+    activeSubzones=[...gameConfig.subzones];
+    activeSubzoneId=activeSubzones[0]||null;
+    const gd=await sbPost('games',{event_id:event_.id,game_number:gn,status:'active',current_round:1,round_started_at:new Date().toISOString(),started_at:new Date().toISOString(),active_subzone:activeSubzones.join(',')});
     game=Array.isArray(gd)?gd[0]:gd;
     await sbPatch('events?id=eq.'+event_.id,{status:'active',current_game:gn});
-    await sbPost('messages',{type:'announce',content:'Partie '+gn+' demarree ! Manche 1 : CACHE (5 min) — Chasseurs, restez immobiles !',game_id:game.id});
-    // Reset all teams to active for new game
-    for(const t of teams){
-      if(t.status==='eliminated'){await sbPatch('teams?id=eq.'+t.id,{status:'active',score:0});t.status='active';t.score=0;}
-    }
-    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);timerSec=ROUND_DUR[1];lastMinuteScored=0;updatePhase();startZoneCheck();startScoreEngine();
-    document.getElementById('btn-stop').disabled=false;buildTeams();
+    const hunterNames=teams.filter(t=>t.role==='chasseur').map(t=>t.name).join(', ')||'?';
+    await sbPost('messages',{type:'announce',content:'Partie '+gn+' demarree ! Chasseurs : '+hunterNames+'. Zone : '+gameConfig.zone+'. Manche 1 : CACHE (5 min)',game_id:game.id});
+    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);timerSec=ROUND_DUR[1];lastMinuteScored=0;
+    updatePhase();startZoneCheck();startScoreEngine();
+    document.getElementById('btn-stop').disabled=false;buildTeams();buildAdminSZEdit();
+    // Show subzone admin section
+    const s=document.getElementById('admin-subzones-sec');if(s)s.style.display='block';
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
