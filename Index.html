@@ -1914,7 +1914,7 @@ async function subModalConfirm(){
     }catch(e){toast('X','Erreur',''+e.message);}
   } else if(subModalMode === 'delete'){
     try{
-      await sb('teams?id=eq.'+subModalTeamId,{method:'DELETE'});
+      await fetch(SB_URL+'/rest/v1/teams?id=eq.'+subModalTeamId,{method:'DELETE',headers:{...H,'Prefer':''}});
       teams = teams.filter(t=>t.id!==subModalTeamId);
       buildTeams();buildAdminSelects();buildAdminTeamList();
       toast('OK','Equipe','Equipe supprimee');closeSubModal();
@@ -2021,12 +2021,12 @@ async function confirmReset(){
       t.score=0;t.status='active';t.role='chasse';t.badges=[];
     }
     // 3. Vider les messages de la radio
-    await sb('messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE'});
+    await fetch(SB_URL+'/rest/v1/messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
     // 4. Mettre a jour l'affichage
     buildTeams();updatePhase();
     document.getElementById('btn-stop').disabled=true;
     toast('🔄','Reset','Evenement reinitialise !');
-  }catch(e){toast('X','Erreur',''+e.message);}
+  }catch(e){console.error('Reset error:',e);toast('X','Erreur',''+e.message);}
 }
 async function adminSetRole(){const tid=document.getElementById('role-team').value,role=document.getElementById('role-val').value;try{await sbPatch('teams?id=eq.'+tid,{role});const t=teams.find(t=>t.id===tid);if(t){t.role=role;buildTeams();}toast('~','Role','Mis a jour');closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
 async function adminEliminate(){const tid=document.getElementById('elim-team').value;try{await sbPatch('teams?id=eq.'+tid,{status:'eliminated'});const t=teams.find(t=>t.id===tid);if(t){t.status='eliminated';await sbPost('messages',{type:'alert',content:t.name+' eliminee par admin',game_id:game?.id});buildTeams();toast('X',t.name,'Eliminee');}closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
