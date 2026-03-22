@@ -1382,38 +1382,43 @@ function showActiveSubzones(){
   if(!ids.length)return;
   const lg=L.layerGroup().addTo(leafMap);
   ids.forEach(zid=>{
-    const zp=ZONE_POLYS.find(z=>z.id===zid);
+    // Utiliser ZONE_POLYS_VISUAL (esthétique) et non ZONE_POLYS (technique)
+    const zp=ZONE_POLYS_VISUAL.find(z=>z.id===zid);
     if(zp)L.geoJSON({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[zp.coords]}},{style:{color:'rgba(255,184,48,1)',weight:3,dashArray:'8 4',fillColor:'rgba(255,184,48,0.18)',fillOpacity:1}}).addTo(lg);
   });
   mapLayers.activeSubzoneLayer=lg;
 }
 function showActiveSubzone(zid){showActiveSubzones();}
 // ══ COULEURS ZONES CARTE ════════════════════════════════════════
+// Les calques zoneFamilies sont construits depuis ZONE_POLYS_VISUAL (dans initMap).
+// Chaque sous-couche Leaflet correspond à une sous-zone dans l'ordre de ZONE_POLYS_VISUAL.
 function updateZoneColors(){
   if(!leafMap || !mapLayers.zoneFamilies) return;
   const activeZone  = game?.active_zone  || null;
   const activeSZids = (game?.active_subzone||'').split(',').filter(Boolean);
-  const r = game?.current_round || 0;
 
   Object.entries(mapLayers.zoneFamilies).forEach(([fam, layer])=>{
     if(!layer) return;
+    const col = ZONE_FAMILY_COLORS[fam] || '#7fff4f';
+
     if(!activeZone || fam !== activeZone){
-      // Famille non choisie : grisée
+      // Famille non choisie : tout grisé
       layer.setStyle({color:'rgba(80,80,80,0.25)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.06)',fillOpacity:0.04});
     } else {
-      // Famille active : colorier sous-zones actives, griser les autres
-      const col = ZONE_FAMILY_COLORS[fam] || '#7fff4f';
-      layer.eachLayer(sublayer=>{
-        const zname = sublayer.feature?.properties?.zone_name;
-        const zv = ZONE_POLYS_VISUAL.find(z=>z.name===zname && z.family===fam);
-        if(!zv) return;
-        // Avant M3 : toutes les SZ de la zone active sont colorées
-        // M3+ : seulement celles dans active_subzone
-        const isActive = activeSZids.includes(zv.id);
+      // Famille active : matcher chaque sous-couche à sa sous-zone par index
+      const zonesInFamily = ZONE_POLYS_VISUAL.filter(z=>z.family===fam);
+      const sublayers = [];
+      layer.eachLayer(sl=>sublayers.push(sl));
+
+      sublayers.forEach((sl, idx)=>{
+        const zv = zonesInFamily[idx];
+        // Si activeSZids est vide (début de partie) : toutes les SZ de la zone sont actives
+        // Sinon : seulement celles dans activeSZids
+        const isActive = zv && (activeSZids.length === 0 || activeSZids.includes(zv.id));
         if(isActive){
-          sublayer.setStyle({color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07});
+          sl.setStyle({color:col,weight:2,dashArray:'5 4',fillColor:col,fillOpacity:0.12});
         } else {
-          sublayer.setStyle({color:'rgba(80,80,80,0.35)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.1)',fillOpacity:0.06});
+          sl.setStyle({color:'rgba(80,80,80,0.35)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.1)',fillOpacity:0.06});
         }
       });
     }
@@ -1788,10 +1793,7 @@ function showRoundOverlay(r){
   document.getElementById('ro-name').textContent=ROUND_NAMES[r]||'';
   document.getElementById('ro-desc').textContent=ROUND_DESC[r]||'';
   ov.style.display='flex';
-  if(leafMap){
-    if(r===3&&activeSubzoneId)showActiveSubzone(activeSubzoneId);
-    else if(r!==3&&mapLayers.activeSubzoneLayer){leafMap.removeLayer(mapLayers.activeSubzoneLayer);mapLayers.activeSubzoneLayer=null;}
-  }
+  if(leafMap && game?.active_subzone) showActiveSubzones();
   let c=5;const cd=document.getElementById('ro-countdown');cd.textContent=c;
   const ti=setInterval(()=>{c--;cd.textContent=c;if(c<=0){clearInterval(ti);ov.style.display='none';}},1000);
   if(navigator.vibrate)navigator.vibrate([200,100,200,100,200]);
@@ -1813,8 +1815,9 @@ function updatePhase(){
   if(tm)  tm.className    = 'ptimer';
   // Carte : afficher/masquer la sous-zone active
   if(leafMap){
-    if((r===3||r===4) && game.active_subzone) showActiveSubzones();
-    else if(r<3 && mapLayers.activeSubzoneLayer){
+    // Afficher les sous-zones actives dès le début (M1, M2, M3, M4)
+    if(game.active_subzone) showActiveSubzones();
+    else if(mapLayers.activeSubzoneLayer){
       leafMap.removeLayer(mapLayers.activeSubzoneLayer);
       mapLayers.activeSubzoneLayer = null;
     }
