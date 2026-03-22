@@ -1355,6 +1355,8 @@ function initMap(){
     const fc={type:'FeatureCollection',features:zones.map(z=>({type:'Feature',properties:{zone_name:z.name},geometry:{type:'Polygon',coordinates:[z.coords]}}))};
     mapLayers.zoneFamilies[fam]=L.geoJSON(fc,{style:{color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07},onEachFeature:(ft,l)=>l.bindTooltip(ft.properties.zone_name,{permanent:false,direction:'center',className:'zone-tooltip'})});
   });
+  // Afficher toutes les zones en couleur au démarrage (pas de partie active)
+  setTimeout(updateZoneColors, 100);
 }
 
 let zonesAllVisible=false,zoneFamilyVisible={};
@@ -1390,10 +1392,9 @@ function showActiveSubzones(){
 }
 function showActiveSubzone(zid){showActiveSubzones();}
 // ══ COULEURS ZONES CARTE ════════════════════════════════════════
-// Les calques zoneFamilies sont construits depuis ZONE_POLYS_VISUAL (dans initMap).
-// Chaque sous-couche Leaflet correspond à une sous-zone dans l'ordre de ZONE_POLYS_VISUAL.
 function updateZoneColors(){
   if(!leafMap || !mapLayers.zoneFamilies) return;
+  const gameActive  = game && game.status === 'active';
   const activeZone  = game?.active_zone  || null;
   const activeSZids = (game?.active_subzone||'').split(',').filter(Boolean);
 
@@ -1401,19 +1402,22 @@ function updateZoneColors(){
     if(!layer) return;
     const col = ZONE_FAMILY_COLORS[fam] || '#7fff4f';
 
-    if(!activeZone || fam !== activeZone){
-      // Famille non choisie : tout grisé
+    // Pas de partie active : tout s'affiche en couleur normale
+    if(!gameActive || !activeZone){
+      layer.setStyle({color:col, weight:1.5, dashArray:'5 4', fillColor:col, fillOpacity:0.07});
+      return;
+    }
+
+    if(fam !== activeZone){
+      // Famille non choisie : grisée
       layer.setStyle({color:'rgba(80,80,80,0.25)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.06)',fillOpacity:0.04});
     } else {
-      // Famille active : matcher chaque sous-couche à sa sous-zone par index
+      // Famille active : colorer les SZ actives, griser les autres
       const zonesInFamily = ZONE_POLYS_VISUAL.filter(z=>z.family===fam);
       const sublayers = [];
       layer.eachLayer(sl=>sublayers.push(sl));
-
       sublayers.forEach((sl, idx)=>{
         const zv = zonesInFamily[idx];
-        // Si activeSZids est vide (début de partie) : toutes les SZ de la zone sont actives
-        // Sinon : seulement celles dans activeSZids
         const isActive = zv && (activeSZids.length === 0 || activeSZids.includes(zv.id));
         if(isActive){
           sl.setStyle({color:col,weight:2,dashArray:'5 4',fillColor:col,fillOpacity:0.12});
@@ -2668,7 +2672,7 @@ async function adminStopGame(){
     game.status='finished';
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
-    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;document.getElementById('btn-next-phase').disabled=true;updatePhase();
+    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;document.getElementById('btn-next-phase').disabled=true;updatePhase();updateZoneColors();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
