@@ -1388,6 +1388,38 @@ function showActiveSubzones(){
   mapLayers.activeSubzoneLayer=lg;
 }
 function showActiveSubzone(zid){showActiveSubzones();}
+// ══ COULEURS ZONES CARTE ════════════════════════════════════════
+function updateZoneColors(){
+  if(!leafMap || !mapLayers.zoneFamilies) return;
+  const activeZone  = game?.active_zone  || null;
+  const activeSZids = (game?.active_subzone||'').split(',').filter(Boolean);
+  const r = game?.current_round || 0;
+
+  Object.entries(mapLayers.zoneFamilies).forEach(([fam, layer])=>{
+    if(!layer) return;
+    if(!activeZone || fam !== activeZone){
+      // Famille non choisie : grisée
+      layer.setStyle({color:'rgba(80,80,80,0.25)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.06)',fillOpacity:0.04});
+    } else {
+      // Famille active : colorier sous-zones actives, griser les autres
+      const col = ZONE_FAMILY_COLORS[fam] || '#7fff4f';
+      layer.eachLayer(sublayer=>{
+        const zname = sublayer.feature?.properties?.zone_name;
+        const zv = ZONE_POLYS_VISUAL.find(z=>z.name===zname && z.family===fam);
+        if(!zv) return;
+        // Avant M3 : toutes les SZ de la zone active sont colorées
+        // M3+ : seulement celles dans active_subzone
+        const isActive = r < 3 || activeSZids.includes(zv.id);
+        if(isActive){
+          sublayer.setStyle({color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07});
+        } else {
+          sublayer.setStyle({color:'rgba(80,80,80,0.35)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.1)',fillOpacity:0.06});
+        }
+      });
+    }
+  });
+}
+
 function toggleLayer(name){
   const layer=mapLayers[name];if(!layer)return;
   layerVisible[name]=!layerVisible[name];
@@ -1709,15 +1741,21 @@ function startTimer(){
 }
 
 function renderTimer(gs){
+  const el = document.getElementById('ptimer');
+  if(!el) return;
+  // Pas de partie active : afficher '-'
+  if(!game || game.status !== 'active'){
+    el.textContent = '-';
+    el.className = 'ptimer nogame';
+    return;
+  }
   if(gs === undefined) gs = getGlobalSecs();
   const secs = getDisplaySecs(gs);
   const m = String(Math.floor(secs/60)).padStart(2,'0');
   const s = String(secs%60).padStart(2,'0');
-  const el = document.getElementById('ptimer');
-  if(el){
-    el.textContent = m+':'+s;
-    el.classList.toggle('urg', secs <= 60 && secs > 0);
-  }
+  el.textContent = m+':'+s;
+  el.className = 'ptimer';
+  el.classList.toggle('urg', secs <= 60 && secs > 0);
 }
 
 async function advanceRound(newR){
