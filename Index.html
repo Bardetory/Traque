@@ -2021,10 +2021,13 @@ async function confirmReset(){
       t.score=0;t.status='active';t.role='chasse';t.badges=[];
     }
     // 3. Vider les messages de la radio
-    await fetch(SB_URL+'/rest/v1/messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
+    const delRes=await fetch(SB_URL+'/rest/v1/messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
+    console.log('DELETE messages status:',delRes.status);
     // 4. Mettre a jour l'affichage
     buildTeams();updatePhase();
     document.getElementById('btn-stop').disabled=true;
+    // Vider l'affichage de la radio immediatement
+    document.getElementById('chat-list').innerHTML='<div style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">Aucun message</div>';
     toast('🔄','Reset','Evenement reinitialise !');
   }catch(e){console.error('Reset error:',e);toast('X','Erreur',''+e.message);}
 }
