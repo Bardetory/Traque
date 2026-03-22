@@ -1098,6 +1098,8 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <div class="asectitle">Controle de partie</div>
       <button class="abtn ok" id="btn-sg" onclick="openLaunchModal()"><span class="ai">&#x25B6;</span> Lancer une partie</button>
       <button class="abtn danger" id="btn-stop" onclick="adminStopGame()" disabled><span class="ai">&#x23F9;</span> Arreter la partie</button>
+      <button class="abtn" id="btn-next-phase" onclick="adminNextPhase()" disabled style="border-color:rgba(255,184,48,.4);color:var(--amber)"><span class="ai">&#x23ED;</span> Phase suivante</button>
+      <div id="next-phase-label" style="font-family:monospace;font-size:9px;color:var(--text-dim);letter-spacing:1px;margin-top:2px;text-align:center"></div>
     </div>
     <div class="asec">
       <div class="asectitle">Decouverte manuelle (litige)</div>
@@ -2214,6 +2216,7 @@ async function launchGame(){
     startZoneCheck();
     startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
+    document.getElementById('btn-next-phase').disabled=false;
     buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
@@ -2257,8 +2260,10 @@ function openSZPicker(){
     if(secs <= 0){
       clearInterval(szPickerTimer);
       szPickerTimer = null;
-      // Temps écoulé sans choix : fermer l'écran (le malus sera géré séparément)
       closeSZPicker();
+      // Temps écoulé : suppression aléatoire + malus uniquement si c'est ce client
+      // qui était le "premier" chasseur (on évite les doublons via Supabase)
+      applyTimeoutPenalty();
     }
   }, 1000);
 
@@ -2311,6 +2316,95 @@ async function confirmSZPick(){
   }catch(e){ toast('X','Erreur',''+e.message); }
 }
 
+async function applyTimeoutPenalty(){
+  if(!game || !game.active_subzone) return;
+  // Vérifier que personne n'a déjà fait le choix pendant qu'on attendait
+  // On relit Supabase pour avoir la valeur la plus récente
+  try{
+    const gd = await sbGet('games?id=eq.'+game.id+'&select=active_subzone');
+    const freshGame = Array.isArray(gd) ? gd[0] : gd;
+    if(!freshGame) return;
+    const current = freshGame.active_subzone ? freshGame.active_subzone.split(',').filter(Boolean) : [];
+    // Si active_subzone a déjà changé (un autre chasseur a choisi), on ne fait rien
+    if(current.length < (game.active_subzone.split(',').filter(Boolean).length)){
+      game.active_subzone = freshGame.active_subzone;
+      return;
+    }
+    // Personne n'a choisi : suppression aléatoire
+    const randomIdx = Math.floor(Math.random() * current.length);
+    const eliminated = current[randomIdx];
+    const remaining = current.filter(z => z !== eliminated);
+
+    await sbPatch('games?id=eq.'+game.id, {active_subzone: remaining.join(',')});
+    game.active_subzone = remaining.join(',');
+
+    // Malus -100 pts à toutes les équipes chasseurs
+    const hunters = teams.filter(t => t.role === 'chasseur');
+    for(const h of hunters){
+      const newScore = Math.max(0, (h.score||0) - 100);
+      await sbPatch('teams?id=eq.'+h.id, {score: newScore});
+      await sbPost('scores', {team_id: h.id, game_id: game.id, points: -100, reason: 'Malus : sous-zone non choisie a temps'});
+      h.score = newScore;
+    }
+
+    const eliminatedName = ZONE_POLYS.find(p => p.id === eliminated)?.name || eliminated;
+    const remainingNames = remaining.map(z => ZONE_POLYS.find(p => p.id === z)?.name || z).join(' et ');
+
+    await sbPost('messages', {
+      type: 'alert',
+      content: '⏰ Les chasseurs n\'ont pas choisi a temps ! Sous-zone supprimee aleatoirement : '+eliminatedName+'. -100 pts aux chasseurs. Zones actives : '+remainingNames,
+      game_id: game.id
+    });
+    buildTeams();
+    toast('⏰','Timeout','-100 pts. Sous-zone supprimee aleatoirement.');
+  }catch(e){ toast('X','Erreur',''+e.message); }
+}
+
+
+// ══ PHASE SUIVANTE (admin) ══════════════════════════════════════════════
+async function adminNextPhase(){
+  if(!game||game.status!=='active') return;
+  // Si le picker sous-zones est ouvert, le fermer sans malus
+  if(typeof szPickerOpen !== 'undefined' && szPickerOpen){
+    closeSZPicker();
+  }
+  // Passer à la manche suivante
+  await autoNextRound();
+}
+
+
+// ══ PHASE SUIVANTE (admin) ══════════════════════════════════════════════
+async function adminNextPhase(){
+  if(!game||game.status!=='active') return;
+  const r = game.current_round||0;
+
+  // Cas 1 : le picker est actuellement ouvert
+  // → fermer sans valider, appliquer malus + suppression aléatoire, avancer la manche
+  if(szPickerOpen){
+    closeSZPicker();
+    await applyTimeoutPenalty();
+    await autoNextRound();
+    return;
+  }
+
+  // Cas 2 : on est en M2 ou M3 et le picker n'a pas encore été déclenché
+  // (timerSec > 180 : le picker ne s'est pas encore ouvert)
+  // → déclencher le picker directement
+  if((r===2||r===3) && timerSec > 180){
+    // Simuler le déclenchement à 3min : ouvrir le picker
+    if(CU.type==='admin'){
+      // L'admin ne voit pas le picker (réservé aux chasseurs)
+      // On saute directement au malus + suppression + manche suivante
+      await applyTimeoutPenalty();
+      await autoNextRound();
+    }
+    return;
+  }
+
+  // Cas 3 : situation normale → passer à la manche suivante
+  await autoNextRound();
+}
+
 async function adminStartGame(){
   if(!event_){toast('!','Admin','Aucun evenement');return;}
   try{const gn=(event_.current_game||0)+1;
@@ -2323,7 +2417,9 @@ async function adminStartGame(){
       if(t.status==='eliminated'){await sbPatch('teams?id=eq.'+t.id,{status:'active',score:0});t.status='active';t.score=0;}
     }
     toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);timerSec=ROUND_DUR[1];lastMinuteScored=0;updatePhase();startZoneCheck();startScoreEngine();
-    document.getElementById('btn-stop').disabled=false;buildTeams();
+    document.getElementById('btn-stop').disabled=false;
+    document.getElementById('btn-next-phase').disabled=false;
+    buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
@@ -2337,7 +2433,7 @@ async function adminStopGame(){
     game.status='finished';
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
-    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;updatePhase();
+    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;document.getElementById('btn-next-phase').disabled=true;updatePhase();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
@@ -2379,6 +2475,7 @@ async function confirmReset(){
     // 4. Mettre a jour l'affichage
     buildTeams();updatePhase();
     document.getElementById('btn-stop').disabled=true;
+    document.getElementById('btn-next-phase').disabled=true;
     // Vider l'affichage de la radio immediatement
     document.getElementById('chat-list').innerHTML='<div style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">Aucun message</div>';
     toast('🔄','Reset','Evenement reinitialise !');
