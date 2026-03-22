@@ -2487,53 +2487,99 @@ async function applyTimeoutPenalty(){
 
 // ══ PHASE SUIVANTE (admin) ══════════════════════════════════════════════
 // Les 6 phases : M1 → M2 → [choix SZ] → M3 → [choix SZ] → M4
+// Saute le chrono global à une valeur cible (en secondes restantes)
+// Modifie started_at dans Supabase : tous les joueurs recalculent automatiquement
+async function jumpToGlobalSecs(targetSecs){
+  if(!game) return;
+  // newStartedAt = Date.now() - (TOTAL_SECS + extraSeconds - targetSecs) * 1000
+  const elapsed = (TOTAL_SECS + extraSeconds - targetSecs) * 1000;
+  const newStartedAt = new Date(Date.now() - elapsed).toISOString();
+  await sbPatch('games?id=eq.'+game.id, {started_at: newStartedAt});
+  game.started_at = newStartedAt;
+}
+
 async function adminNextPhase(){
   if(!game || game.status!=='active') return;
-  const r = game.current_round||0;
-  const gs = getGlobalSecs();
+  const r   = game.current_round||0;
+  const gs  = getGlobalSecs();
 
-  // Si le picker est ouvert : forcer la fin
-  if(szPickerOpen){
-    closeSZPicker();
-    await applyTimeoutPenalty();
+  // ── Phase picker en cours (chasseurs en train de choisir) ──
+  // Le picker est ouvert entre SZ_PICKER_TRIGGER[r] et SZ_PICKER_DEADLINE[r]
+  const inPickerZone = (r===2||r===3) && gs <= SZ_PICKER_TRIGGER[r] && gs > SZ_PICKER_DEADLINE[r];
+
+  if(szPickerOpen || inPickerZone){
+    // Forcer : fermer le picker + malus si pas de choix + sauter au début de la prochaine manche
+    if(szPickerOpen){
+      closeSZPicker();
+      await applyTimeoutPenalty();
+    }
+    // Sauter à la deadline (début de la manche suivante)
+    const deadline = SZ_PICKER_DEADLINE[r]; // 600 pour M2→M3, 300 pour M3→M4
+    await jumpToGlobalSecs(deadline);
     updateNextPhaseLabel();
+    toast('⏭','Admin','Passage a la manche suivante');
     return;
   }
 
-  // En M2 ou M3 et picker pas encore déclenché : le déclencher
-  if((r===2 || r===3) && !szPickerTriggered[r]){
-    szPickerTriggered[r] = true;
-    await sbPost('messages',{type:'announce',content:'⚔️ Les chasseurs choisissent une sous-zone a supprimer ! (3 min)',game_id:game.id});
-    toast('⚔️','Admin','Picker sous-zone declenche pour les chasseurs');
-    updateNextPhaseLabel();
-    return;
+  // ── Cas par manche ──
+  if(r===1){
+    // M1 → sauter à 30:00 (début M2 = 1800s)
+    await jumpToGlobalSecs(ROUND_STARTS[2]);
+    toast('⏭','Admin','Saut au debut de M2 (30:00)');
+
+  } else if(r===2 && gs > SZ_PICKER_TRIGGER[r]){
+    // M2 avant le picker → sauter à 23:00 (1380s) pour déclencher le picker
+    await jumpToGlobalSecs(SZ_PICKER_TRIGGER[r]);
+    toast('⏭','Admin','Saut a 23:00 — picker sous-zones declenche');
+
+  } else if(r===3 && gs > SZ_PICKER_TRIGGER[r]){
+    // M3 avant le picker → sauter à 13:00 (780s)
+    await jumpToGlobalSecs(SZ_PICKER_TRIGGER[r]);
+    toast('⏭','Admin','Saut a 13:00 — picker sous-zones declenche');
+
+  } else if(r===4){
+    // M4 → fin de partie
+    await jumpToGlobalSecs(0);
+    toast('⏭','Admin','Fin de partie');
+
+  } else {
+    // Cas imprévu → avancer d'une manche
+    const nextR = r + 1;
+    if(nextR > 4){ await adminStopGame(); return; }
+    await advanceRound(nextR);
   }
 
-  // Sinon : avancer à la prochaine manche
-  const nextR = r + 1;
-  if(nextR > 4){ await adminStopGame(); return; }
-  await advanceRound(nextR);
+  updateNextPhaseLabel();
 }
 
 function updateNextPhaseLabel(){
   const el = document.getElementById('next-phase-label');
   if(!el) return;
-  if(!game || game.status!=='active'){ el.textContent=''; return; }
-  const r = game.current_round||0;
-  const labels = {
-    1:'→ Manche 2 (Recherche libre)',
-    2:'→ Choix sous-zone par chasseurs',
-    3:'→ Manche 4 (Final)',
-    4:'→ Fin de partie'
-  };
-  // Si picker ouvert : indiquer qu'on peut forcer
+  if(!game || game.status!=='active'){ el.textContent=''; el.style.color='var(--text-dim)'; return; }
+  const r  = game.current_round||0;
+  const gs = getGlobalSecs();
+
+  let label = '';
+  let color = 'var(--text-dim)';
+
   if(szPickerOpen){
-    el.textContent = '⚠️ Picker ouvert — cliquer force le choix';
-    el.style.color = 'var(--red)';
-  } else {
-    el.textContent = labels[r]||'';
-    el.style.color = 'var(--text-dim)';
+    label = '⚠️ Picker ouvert — force le choix + passe M suivante';
+    color = 'var(--red)';
+  } else if(r===1){
+    label = '→ Saute a 30:00 (debut M2)';
+  } else if(r===2 && gs > SZ_PICKER_TRIGGER[r]){
+    label = '→ Saute a 23:00 (picker sous-zones)';
+  } else if((r===2||r===3) && gs <= SZ_PICKER_TRIGGER[r] && gs > SZ_PICKER_DEADLINE[r]){
+    label = '→ Saute a '+(r===2?'20:00':'10:00')+' (debut M'+(r+1)+')';
+    color = 'var(--amber)';
+  } else if(r===3 && gs > SZ_PICKER_TRIGGER[r]){
+    label = '→ Saute a 13:00 (picker sous-zones)';
+  } else if(r===4){
+    label = '→ Fin de partie (0:00)';
   }
+
+  el.textContent = label;
+  el.style.color = color;
 }
 
 async function adminStartGame(){
