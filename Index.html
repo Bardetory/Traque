@@ -870,6 +870,18 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 .lm-go{width:100%;background:var(--acid);border:none;border-radius:2px;padding:14px;font-size:15px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--forest);cursor:pointer;margin-top:8px;transition:opacity .2s}
 .lm-go:disabled{opacity:.35;cursor:not-allowed}
 .lm-cancel{width:100%;background:none;border:1px solid var(--border);border-radius:2px;padding:11px;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);cursor:pointer;margin-top:6px}
+
+/* ── SUBZONE PICKER (chasseurs) ── */
+#sz-picker-modal{position:fixed;inset:0;z-index:960;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.96);backdrop-filter:blur(8px)}
+.szp-box{background:var(--forest-mid);border:2px solid var(--amber);border-radius:2px;padding:26px 22px;width:calc(100% - 32px);max-width:360px}
+.szp-title{font-size:15px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--amber);display:block;margin-bottom:6px}
+.szp-timer{font-family:monospace;font-size:42px;font-weight:700;color:var(--red);display:block;text-align:center;margin:10px 0;animation:blink .8s infinite}
+.szp-sub{font-size:12px;color:var(--text-dim);line-height:1.5;margin-bottom:16px;text-align:center}
+.szp-zone-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
+.szp-zone-btn{padding:12px 14px;background:var(--forest);border:1px solid var(--border);border-radius:2px;font-family:monospace;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);cursor:pointer;transition:all .15s;text-align:center}
+.szp-zone-btn.sel{border-color:var(--amber);color:var(--amber);background:rgba(255,184,48,.1);font-weight:700}
+.szp-confirm{width:100%;background:var(--amber);border:none;border-radius:2px;padding:13px;font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--forest);cursor:pointer}
+.szp-confirm:disabled{opacity:.35;cursor:not-allowed}
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
@@ -1008,6 +1020,18 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 </div>
 
 <div id="toasts"></div>
+
+<!-- ── SUBZONE PICKER MODAL (chasseurs) ── -->
+<div id="sz-picker-modal">
+  <div class="szp-box">
+    <span class="szp-title">⚔️ Choisissez une sous-zone a supprimer</span>
+    <span class="szp-timer" id="szp-timer">3:00</span>
+    <p class="szp-sub">Choisissez la sous-zone que les chassés n'auront PAS besoin de rejoindre.<br>Les 2 restantes seront actives.</p>
+    <div class="szp-zone-list" id="szp-zone-list"></div>
+    <button class="szp-confirm" id="szp-confirm-btn" disabled onclick="confirmSZPick()">Confirmer la suppression</button>
+  </div>
+</div>
+
 
 <!-- ── LAUNCH MODAL ── -->
 <div id="launch-modal">
@@ -1206,6 +1230,9 @@ const GRACE=10;
 const BDEFS=[{i:'W',n:'Fantomes'},{i:'Z',n:'Traque Eclair'},{i:'M',n:'Nomades'},{i:'G',n:'Discretion'},{i:'T',n:'Complete'},{i:'S',n:'Maitres'}];
 
 let CU=null,teams=[],game=null,event_=null,gpsId=null,timerInt=null,zoneInt=null,scoreInt=null;
+let szPickerTimer=null; // interval du compte à rebours chasseurs
+let szPickerSelected=null; // sous-zone sélectionnée par les chasseurs
+let szPickerOpen=false; // évite d'ouvrir plusieurs fois
 let timerSec=0,showCount=true,myId=null;
 let outSecs=0,malusIdx=0,wasOut=false,myLat=null,myLng=null;
 let leafMap=null,myMarker=null,myAccCircle=null,teamMarkers={};
@@ -1572,10 +1599,17 @@ function startTimer(){
     if(!game||game.status!=='active')return;
     if(timerSec>0){
       timerSec--;
-      if(timerSec===180&&(game.current_round||0)===2){
-        sbPost('messages',{type:'announce',content:'ATTENTION : Sous-zone dans 3 minutes ! Preparez-vous.',game_id:game.id});
-        toast('!','Annonce','Sous-zone dans 3 minutes !');
+      const cr=game.current_round||0;
+      // Déclencher le picker à 3 min de la fin de M2 (pour M3) et M3 (pour M4)
+      if(timerSec===180&&(cr===2||cr===3)){
+        sbPost('messages',{type:'announce',content:'⚔️ Les chasseurs choisissent une sous-zone a supprimer ! (3 min)',game_id:game.id});
+        toast('⚔️','Sous-zones','Les chasseurs choisissent...');
         if(navigator.vibrate)navigator.vibrate([200,100,200]);
+        // Ouvrir l'écran picker uniquement pour les chasseurs
+        if(CU.type==='team'){
+          const myTeam=teams.find(t=>t.id===myId);
+          if(myTeam&&myTeam.role==='chasseur') openSZPicker();
+        }
       }
       renderTimer();
     }else{if(CU.type==='admin')autoNextRound();}
@@ -1643,7 +1677,15 @@ function startPolling(){
         if(Array.isArray(gd)){
           const wasA=game&&game.status==='active',prevR=game?.current_round;
           game=gd.length?gd[0]:null;
-          if(game?.active_subzone&&game.active_subzone!==activeSubzoneId){activeSubzoneId=game.active_subzone;if((game.current_round||0)===3)showActiveSubzone(activeSubzoneId);const _z=ZONE_POLYS.find(x=>x.id===activeSubzoneId);if(_z)toast('📍','Sous-zone',_z.name+' activee !');}
+          // Détecter changement de sous-zones actives (choix fait par un chasseur)
+          if(game?.active_subzone !== undefined){
+            const prevSZ = activeSubzoneId;
+            if(game.active_subzone !== prevSZ){
+              activeSubzoneId = game.active_subzone;
+              // Si le picker est ouvert sur ce téléphone, le fermer (un autre chasseur a choisi)
+              if(szPickerOpen) closeSZPicker();
+            }
+          }
           if(!wasA&&game){toast('!','Partie','La partie a commence!');showRoundOverlay(1);startZoneCheck();startScoreEngine();}
           if(game&&prevR&&game.current_round!==prevR){showRoundOverlay(game.current_round);outSecs=0;malusIdx=0;wasOut=false;lastMinuteScored=0;hideZB();}
           updatePhase();
@@ -2174,6 +2216,99 @@ async function launchGame(){
     document.getElementById('btn-stop').disabled=false;
     buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
+}
+
+
+// ══ SUBZONE PICKER ══════════════════════════════════════════════════════
+function openSZPicker(){
+  if(szPickerOpen) return; // déjà ouvert
+  if(!game||!game.active_subzone) return;
+  const currentSubzones = game.active_subzone.split(',').filter(Boolean);
+  if(currentSubzones.length < 2) return; // plus rien à supprimer
+
+  szPickerOpen = true;
+  szPickerSelected = null;
+  document.getElementById('szp-confirm-btn').disabled = true;
+
+  // Construire la liste des sous-zones disponibles
+  const list = document.getElementById('szp-zone-list');
+  list.innerHTML = '';
+  currentSubzones.forEach(szId => {
+    const zone = ZONE_POLYS.find(z => z.id === szId);
+    const btn = document.createElement('div');
+    btn.className = 'szp-zone-btn';
+    btn.textContent = zone ? zone.name : szId;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.szp-zone-btn').forEach(b => b.classList.remove('sel'));
+      btn.classList.add('sel');
+      szPickerSelected = szId;
+      document.getElementById('szp-confirm-btn').disabled = false;
+    });
+    list.appendChild(btn);
+  });
+
+  // Lancer le compte à rebours de 3 min
+  let secs = 180;
+  renderSZTimer(secs);
+  if(szPickerTimer) clearInterval(szPickerTimer);
+  szPickerTimer = setInterval(() => {
+    secs--;
+    renderSZTimer(secs);
+    if(secs <= 0){
+      clearInterval(szPickerTimer);
+      szPickerTimer = null;
+      // Temps écoulé sans choix : fermer l'écran (le malus sera géré séparément)
+      closeSZPicker();
+    }
+  }, 1000);
+
+  document.getElementById('sz-picker-modal').style.display = 'flex';
+}
+
+function renderSZTimer(secs){
+  const m = String(Math.floor(secs/60)).padStart(2,'0');
+  const s = String(secs%60).padStart(2,'0');
+  const el = document.getElementById('szp-timer');
+  if(el) el.textContent = m+':'+s;
+}
+
+function closeSZPicker(){
+  szPickerOpen = false;
+  szPickerSelected = null;
+  if(szPickerTimer){ clearInterval(szPickerTimer); szPickerTimer = null; }
+  document.getElementById('sz-picker-modal').style.display = 'none';
+  document.querySelectorAll('.szp-zone-btn').forEach(b => b.classList.remove('sel'));
+  document.getElementById('szp-confirm-btn').disabled = true;
+}
+
+async function confirmSZPick(){
+  if(!szPickerSelected || !game) return;
+  const eliminated = szPickerSelected;
+  closeSZPicker();
+
+  // Calculer les 2 sous-zones restantes
+  const current = game.active_subzone.split(',').filter(Boolean);
+  const remaining = current.filter(z => z !== eliminated);
+
+  // Sauvegarder dans Supabase
+  try{
+    await sbPatch('games?id=eq.'+game.id, {active_subzone: remaining.join(',')});
+    game.active_subzone = remaining.join(',');
+
+    // Noms des sous-zones restantes pour le message
+    const remainingNames = remaining.map(z => {
+      const found = ZONE_POLYS.find(p => p.id === z);
+      return found ? found.name : z;
+    }).join(' et ');
+    const eliminatedName = ZONE_POLYS.find(p => p.id === eliminated)?.name || eliminated;
+
+    await sbPost('messages', {
+      type: 'announce',
+      content: '📍 Sous-zone supprimee : '+eliminatedName+'. Zones actives pour la prochaine manche : '+remainingNames,
+      game_id: game.id
+    });
+    toast('📍','Sous-zones',remainingNames+' actives !');
+  }catch(e){ toast('X','Erreur',''+e.message); }
 }
 
 async function adminStartGame(){
