@@ -1545,6 +1545,9 @@ function startZoneCheck(){
   if(zoneInt)clearInterval(zoneInt);
   zoneInt=setInterval(()=>{
     if(!game||game.status!=='active'||CU.type==='admin')return;
+    // Les chasseurs ne sont pas soumis aux malus de zone
+    const myTeam=teams.find(t=>t.id===myId);
+    if(myTeam&&myTeam.role==='chasseur'){hideZB();return;}
     const r=game.current_round||0;
     if(r===1){hideZB();return;}
     if(myLat==null)return;
