@@ -1409,7 +1409,7 @@ function updateZoneColors(){
         if(!zv) return;
         // Avant M3 : toutes les SZ de la zone active sont colorées
         // M3+ : seulement celles dans active_subzone
-        const isActive = r < 3 || activeSZids.includes(zv.id);
+        const isActive = activeSZids.includes(zv.id);
         if(isActive){
           sublayer.setStyle({color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07});
         } else {
@@ -1865,7 +1865,7 @@ function startPolling(){
         }
       }
       // Check pending discovery messages
-      const msgs=await sbGet('messages?select=*&order=created_at.asc&limit=50');
+      const msgs=await sbGet('messages?select=*&order=created_at.desc&limit=50');
       checkPendingDiscovery(msgs);
     }catch(e){}
   },3000);
@@ -2063,7 +2063,7 @@ async function awardBadgesEndOfEvent(){
   }
 }
 async function refreshChat(){
-  try{const msgs=await sbGet('messages?select=*&order=created_at.asc&limit=50');
+  try{const msgs=await sbGet('messages?select=*&order=created_at.desc&limit=50');
     if(!Array.isArray(msgs)||!msgs.length){document.getElementById('chat-list').innerHTML='<div style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">Aucun message</div>';return;}
     // Filter out internal discovery messages
     const visible=msgs.filter(m=>!m.content.startsWith('DECOUVERTE:'));
