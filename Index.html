@@ -1633,7 +1633,7 @@ async function autoNextRound(){
     const msgs={1:'Manche 1 : CACHE (5 min)',2:'Manche 2 : RECHERCHE LIBRE (10 min)',3:'Manche 3 : SOUS-ZONE (10 min)',4:'Manche 4 : FINAL (10 min)'};
     await sbPost('messages',{type:'announce',content:msgs[nr],game_id:game.id});
     timerSec=ROUND_DUR[nr];lastMinuteScored=0;
-    showRoundOverlay(nr);outSecs=0;malusIdx=0;wasOut=false;hideZB();updatePhase();
+    showRoundOverlay(nr);outSecs=0;malusIdx=0;wasOut=false;hideZB();updatePhase();updateNextPhaseLabel();
   }catch(e){game._adv=false;}
 }
 
@@ -2217,6 +2217,7 @@ async function launchGame(){
     startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
     document.getElementById('btn-next-phase').disabled=false;
+    updateNextPhaseLabel();
     buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
@@ -2268,6 +2269,7 @@ function openSZPicker(){
   }, 1000);
 
   document.getElementById('sz-picker-modal').style.display = 'flex';
+  updateNextPhaseLabel();
 }
 
 function renderSZTimer(secs){
@@ -2282,6 +2284,7 @@ function closeSZPicker(){
   szPickerSelected = null;
   if(szPickerTimer){ clearInterval(szPickerTimer); szPickerTimer = null; }
   document.getElementById('sz-picker-modal').style.display = 'none';
+  updateNextPhaseLabel();
   document.querySelectorAll('.szp-zone-btn').forEach(b => b.classList.remove('sel'));
   document.getElementById('szp-confirm-btn').disabled = true;
 }
@@ -2362,47 +2365,56 @@ async function applyTimeoutPenalty(){
 
 
 // ══ PHASE SUIVANTE (admin) ══════════════════════════════════════════════
+// Les 6 phases : M1 → M2 → [choix SZ] → M3 → [choix SZ] → M4
 async function adminNextPhase(){
-  if(!game||game.status!=='active') return;
-  // Si le picker sous-zones est ouvert, le fermer sans malus
-  if(typeof szPickerOpen !== 'undefined' && szPickerOpen){
-    closeSZPicker();
-  }
-  // Passer à la manche suivante
-  await autoNextRound();
-}
-
-
-// ══ PHASE SUIVANTE (admin) ══════════════════════════════════════════════
-async function adminNextPhase(){
-  if(!game||game.status!=='active') return;
+  if(!game || game.status!=='active') return;
   const r = game.current_round||0;
 
-  // Cas 1 : le picker est actuellement ouvert
-  // → fermer sans valider, appliquer malus + suppression aléatoire, avancer la manche
+  // Phase "choix sous-zone" : M2 ou M3 et le picker n'a pas encore été traité
+  // L'admin déclenche le picker pour les chasseurs, puis attend
+  // Si le picker est déjà ouvert (chasseurs en train de choisir) → on force le timeout
   if(szPickerOpen){
+    // Forcer la fin du picker : fermer + appliquer malus + avancer
     closeSZPicker();
     await applyTimeoutPenalty();
     await autoNextRound();
     return;
   }
 
-  // Cas 2 : on est en M2 ou M3 et le picker n'a pas encore été déclenché
-  // (timerSec > 180 : le picker ne s'est pas encore ouvert)
-  // → déclencher le picker directement
-  if((r===2||r===3) && timerSec > 180){
-    // Simuler le déclenchement à 3min : ouvrir le picker
-    if(CU.type==='admin'){
-      // L'admin ne voit pas le picker (réservé aux chasseurs)
-      // On saute directement au malus + suppression + manche suivante
-      await applyTimeoutPenalty();
-      await autoNextRound();
-    }
+  // En M2 ou M3 : déclencher le picker pour les chasseurs (simuler les 3 min)
+  if(r===2 || r===3){
+    // Envoyer le message radio comme si on était à 3 min de la fin
+    await sbPost('messages',{type:'announce',content:'⚔️ Les chasseurs choisissent une sous-zone a supprimer ! (3 min)',game_id:game.id});
+    toast('⚔️','Admin','Picker sous-zone declenche');
+    // Déclencher le picker sur les téléphones des chasseurs via le timer
+    // L'admin voit un label qui indique d'attendre
+    updateNextPhaseLabel();
     return;
   }
 
-  // Cas 3 : situation normale → passer à la manche suivante
+  // Sinon : passer simplement à la manche suivante
   await autoNextRound();
+}
+
+function updateNextPhaseLabel(){
+  const el = document.getElementById('next-phase-label');
+  if(!el) return;
+  if(!game || game.status!=='active'){ el.textContent=''; return; }
+  const r = game.current_round||0;
+  const labels = {
+    1:'→ Manche 2 (Recherche libre)',
+    2:'→ Choix sous-zone par chasseurs',
+    3:'→ Manche 4 (Final)',
+    4:'→ Fin de partie'
+  };
+  // Si picker ouvert : indiquer qu'on peut forcer
+  if(szPickerOpen){
+    el.textContent = '⚠️ Picker ouvert — cliquer force le choix';
+    el.style.color = 'var(--red)';
+  } else {
+    el.textContent = labels[r]||'';
+    el.style.color = 'var(--text-dim)';
+  }
 }
 
 async function adminStartGame(){
@@ -2419,6 +2431,7 @@ async function adminStartGame(){
     toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);timerSec=ROUND_DUR[1];lastMinuteScored=0;updatePhase();startZoneCheck();startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
     document.getElementById('btn-next-phase').disabled=false;
+    updateNextPhaseLabel();
     buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
