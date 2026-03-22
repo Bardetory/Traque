@@ -1219,7 +1219,18 @@ const SCORE_PERFECT_HUNT = 380;       // bonus chasse parfaite
 // ── ROUNDS ─────────────────────────────────────
 const ROUND_NAMES=['','Cache','Recherche Libre','Sous-Zone','Final'];
 // CORRECTION: Manche 1 = 5min (300s)
-const ROUND_DUR=[0,300,600,600,600];
+// Système de chrono global (35 min = 2100s)
+// M1: 35min→30min (2100→1800), M2: 30min→20min (1800→1200)
+// M3: 20min→10min (1200→600),  M4: 10min→0min  (600→0)
+const TOTAL_SECS = 2100; // 35 minutes
+const ROUND_STARTS = [0, 2100, 1800, 1200, 600]; // globalSecs au début de chaque manche
+const ROUND_ENDS   = [0, 1800, 1200,  600,   0]; // globalSecs à la fin de chaque manche
+// Picker sous-zones : se déclenche quand globalSecs atteint ces valeurs
+const SZ_PICKER_TRIGGER = {2: 720, 3: 420}; // M2: 23min restantes (720s globales), M3: 13min (420s)
+const SZ_PICKER_DEADLINE = {2: 600, 3: 300}; // M2: 20min (fin M2), M3: 10min (fin M3)
+// Fenêtre "tardive" : si le choix se fait dans la dernière minute → +60s pénalité
+const SZ_LATE_THRESHOLD = {2: 660, 3: 360}; // 1min avant la fin de la fenêtre
+const ROUND_DUR=[0,300,600,600,600]; // gardé pour les overlays
 const ROUND_DESC=[
   '',
   'Cachez-vous ! Les chasseurs restent immobiles. (5 min)',
@@ -1232,10 +1243,12 @@ const GRACE=10;
 const BDEFS=[{i:'W',n:'Fantomes'},{i:'Z',n:'Traque Eclair'},{i:'M',n:'Nomades'},{i:'G',n:'Discretion'},{i:'T',n:'Complete'},{i:'S',n:'Maitres'}];
 
 let CU=null,teams=[],game=null,event_=null,gpsId=null,timerInt=null,zoneInt=null,scoreInt=null;
-let szPickerTimer=null; // interval du compte à rebours chasseurs
-let szPickerSelected=null; // sous-zone sélectionnée par les chasseurs
-let szPickerOpen=false; // évite d'ouvrir plusieurs fois
-let timerSec=0,showCount=true,myId=null;
+let szPickerTimer=null;
+let szPickerSelected=null;
+let szPickerOpen=false;
+let extraSeconds=0;        // minutes bonus ajoutées (lues depuis Supabase)
+let szPickerTriggered={2:false,3:false}; // évite de déclencher le picker 2x
+let showCount=true,myId=null;
 let outSecs=0,malusIdx=0,wasOut=false,myLat=null,myLng=null;
 let leafMap=null,myMarker=null,myAccCircle=null,teamMarkers={};
 let mapLayers={chemins:null,eau:null,limite:null,subzone:null};
@@ -1418,18 +1431,20 @@ function startScoreEngine(){
     const myTeam=teams.find(t=>t.id===myId);
     if(!myTeam||myTeam.status==='eliminated')return;
 
-    // Chassés: +50 pts per complete minute not found
+    // Chassés: +50 pts par minute complète non trouvé
     if(myTeam.role==='chasse'){
-      if(!game.round_started_at)return;
-      const elapsed=Math.floor((Date.now()-new Date(game.round_started_at).getTime())/1000);
-      const minutesDone=Math.floor(elapsed/60);
-      incrementHiddenTime(myId); // track for discretion badge
-      if(minutesDone>lastMinuteScored){
-        const newMins=minutesDone-lastMinuteScored;
-        lastMinuteScored=minutesDone;
-        const pts=newMins*SCORE_CHASSE_PER_MIN;
-        await addScore(myId,pts,'Survie ('+newMins+' min)');
-        showScoreNotif('+'+pts,'Survie !');
+      if(!game.started_at) return;
+      // Calcul basé sur le chrono global : minutes écoulées depuis le début de la partie
+      const gs = getGlobalSecs();
+      const totalElapsed = Math.floor(TOTAL_SECS + extraSeconds - gs); // secondes écoulées
+      const minutesDone = Math.floor(totalElapsed / 60);
+      incrementHiddenTime(myId);
+      if(minutesDone > lastMinuteScored){
+        const newMins = minutesDone - lastMinuteScored;
+        lastMinuteScored = minutesDone;
+        const pts = newMins * SCORE_CHASSE_PER_MIN;
+        await addScore(myId, pts, 'Survie ('+newMins+' min)');
+        showScoreNotif('+'+pts, 'Survie !');
       }
     }
   },10000); // check every 10s
@@ -1598,46 +1613,114 @@ async function autoElim(){
 }
 
 // ══ TIMER ═════════════════════════════════════
-function startTimer(){
-  if(timerInt)clearInterval(timerInt);
-  timerInt=setInterval(()=>{
-    if(!game||game.status!=='active')return;
-    if(timerSec>0){
-      timerSec--;
-      const cr=game.current_round||0;
-      // Déclencher le picker à 3 min de la fin de M2 (pour M3) et M3 (pour M4)
-      if(timerSec===180&&(cr===2||cr===3)){
-        sbPost('messages',{type:'announce',content:'⚔️ Les chasseurs choisissent une sous-zone a supprimer ! (3 min)',game_id:game.id});
-        toast('⚔️','Sous-zones','Les chasseurs choisissent...');
-        if(navigator.vibrate)navigator.vibrate([200,100,200]);
-        // Ouvrir l'écran picker uniquement pour les chasseurs
-        if(CU.type==='team'){
-          const myTeam=teams.find(t=>t.id===myId);
-          if(myTeam&&myTeam.role==='chasseur') openSZPicker();
-        }
-      }
-      renderTimer();
-    }else{if(CU.type==='admin')autoNextRound();}
-  },1000);
-  renderTimer();
-}
-function renderTimer(){
-  const m=String(Math.floor(timerSec/60)).padStart(2,'0'),s=String(timerSec%60).padStart(2,'0');
-  const el=document.getElementById('ptimer');el.textContent=m+':'+s;el.classList.toggle('urg',timerSec<=60&&timerSec>0);
+// ── CHRONO GLOBAL ──────────────────────────────────────────────
+// Calcule les secondes globales restantes depuis started_at + extra_seconds
+function getGlobalSecs(){
+  if(!game||!game.started_at) return 0;
+  const elapsed = Math.floor((Date.now() - new Date(game.started_at).getTime()) / 1000);
+  return Math.max(0, TOTAL_SECS + extraSeconds - elapsed);
 }
 
-async function autoNextRound(){
-  if(!game||game._adv)return;game._adv=true;
-  const nr=(game.current_round||0)+1;
-  if(nr>4){await adminStopGame();return;}
+// Retourne la manche courante selon globalSecs
+function getRoundFromGlobal(gs){
+  if(gs > ROUND_STARTS[2]) return 1; // >1800 → M1
+  if(gs > ROUND_STARTS[3]) return 2; // >1200 → M2
+  if(gs > ROUND_STARTS[4]) return 3; // >600  → M3
+  if(gs > 0)               return 4; // >0    → M4
+  return 0; // terminé
+}
+
+// Secondes restantes dans la manche en cours (affiché au joueur)
+function getRoundDisplaySecs(gs){
+  const r = getRoundFromGlobal(gs);
+  if(r===0) return 0;
+  return gs - ROUND_ENDS[r];
+}
+
+function startTimer(){
+  if(timerInt) clearInterval(timerInt);
+  timerInt = setInterval(async()=>{
+    if(!game || game.status!=='active') return;
+    const gs = getGlobalSecs();
+    const r  = getRoundFromGlobal(gs);
+
+    // Détecter changement de manche automatiquement
+    const prevR = game.current_round||0;
+    if(r !== prevR && r > 0 && r > prevR){
+      // Nouvelle manche détectée côté client
+      if(CU.type==='admin'){
+        // Seul l'admin écrit dans Supabase pour éviter les doublons
+        await advanceRound(r);
+      }
+    } else if(r === 0 && prevR > 0){
+      // Fin de partie
+      if(CU.type==='admin') await adminStopGame();
+    }
+
+    // Déclencher le picker sous-zones (une seule fois par manche)
+    if((r===2 || r===3) && !szPickerTriggered[r]){
+      const trigger = SZ_PICKER_TRIGGER[r];
+      if(gs <= trigger){
+        szPickerTriggered[r] = true;
+        if(CU.type==='admin'){
+          await sbPost('messages',{type:'announce',content:'⚔️ Les chasseurs choisissent une sous-zone a supprimer ! (3 min)',game_id:game.id});
+        }
+        if(CU.type==='team'){
+          const myTeam = teams.find(t=>t.id===myId);
+          if(myTeam && myTeam.role==='chasseur') openSZPicker();
+        }
+        if(navigator.vibrate) navigator.vibrate([200,100,200]);
+        toast('⚔️','Sous-zones','Les chasseurs choisissent...');
+      }
+    }
+
+    // Fermer le picker si le délai est dépassé sans choix
+    if(szPickerOpen){
+      const deadline = SZ_PICKER_DEADLINE[r];
+      if(deadline !== undefined && gs <= deadline){
+        closeSZPicker();
+        await applyTimeoutPenalty();
+      }
+    }
+
+    renderTimer(gs);
+  }, 1000);
+  renderTimer(getGlobalSecs());
+}
+
+function renderTimer(gs){
+  if(gs === undefined) gs = getGlobalSecs();
+  const displaySecs = getRoundDisplaySecs(gs);
+  const m = String(Math.floor(displaySecs/60)).padStart(2,'0');
+  const s = String(displaySecs%60).padStart(2,'0');
+  const el = document.getElementById('ptimer');
+  if(el){
+    el.textContent = m+':'+s;
+    el.classList.toggle('urg', displaySecs <= 60 && displaySecs > 0);
+  }
+}
+
+async function advanceRound(newR){
+  if(!game || game._adv) return; game._adv=true;
   try{
-    await sbPatch('games?id=eq.'+game.id,{current_round:nr,round_started_at:new Date().toISOString()});
-    game.current_round=nr;game.round_started_at=new Date().toISOString();game._adv=false;
+    await sbPatch('games?id=eq.'+game.id, {current_round: newR});
+    game.current_round = newR; game._adv=false;
     const msgs={1:'Manche 1 : CACHE (5 min)',2:'Manche 2 : RECHERCHE LIBRE (10 min)',3:'Manche 3 : SOUS-ZONE (10 min)',4:'Manche 4 : FINAL (10 min)'};
-    await sbPost('messages',{type:'announce',content:msgs[nr],game_id:game.id});
-    timerSec=ROUND_DUR[nr];lastMinuteScored=0;
-    showRoundOverlay(nr);outSecs=0;malusIdx=0;wasOut=false;hideZB();updatePhase();updateNextPhaseLabel();
+    await sbPost('messages',{type:'announce',content:msgs[newR],game_id:game.id});
+    lastMinuteScored=0;
+    showRoundOverlay(newR);
+    outSecs=0;malusIdx=0;wasOut=false;hideZB();
+    updatePhase();updateNextPhaseLabel();
+    // Reset le flag picker pour la nouvelle manche
+    szPickerTriggered[newR]=false;
   }catch(e){game._adv=false;}
+}
+
+// autoNextRound gardé pour compatibilité avec adminNextPhase
+async function autoNextRound(){
+  const gs = getGlobalSecs();
+  const nr = getRoundFromGlobal(gs);
+  if(nr > 0) await advanceRound(nr);
 }
 
 function showRoundOverlay(r){
@@ -1658,15 +1741,23 @@ function showRoundOverlay(r){
 
 function updatePhase(){
   const lbl=document.getElementById('plabel'),nm=document.getElementById('pname'),tm=document.getElementById('ptimer');
-  if(!game||game.status!=='active'){lbl.textContent='En attente';nm.textContent='Partie non demarree';tm.textContent='-';tm.className='ptimer nogame';return;}
+  if(!game||game.status!=='active'){
+    if(lbl) lbl.textContent='En attente';
+    if(nm) nm.textContent='Partie non demarree';
+    if(tm){tm.textContent='-';tm.className='ptimer nogame';}
+    return;
+  }
   const r=game.current_round||0;
-  lbl.textContent='Manche '+r+' . Partie '+game.game_number;
-  nm.textContent=ROUND_NAMES[r]||'En cours';tm.className='ptimer';
+  if(lbl) lbl.textContent='Manche '+r+' . Partie '+game.game_number;
+  if(nm) nm.textContent=ROUND_NAMES[r]||'En cours';
+  if(tm) tm.className='ptimer';
   if(leafMap){
-    if(r===3&&activeSubzoneId)showActiveSubzone(activeSubzoneId);
+    if(r===3&&activeSubzoneId) showActiveSubzone(activeSubzoneId);
     else if(r!==3&&mapLayers.activeSubzoneLayer){leafMap.removeLayer(mapLayers.activeSubzoneLayer);mapLayers.activeSubzoneLayer=null;}
   }
-  if(game.round_started_at){const el=Math.floor((Date.now()-new Date(game.round_started_at).getTime())/1000);timerSec=Math.max(0,ROUND_DUR[r]-el);}
+  // Recalibrer le picker triggered selon la manche courante
+  if(r >= 2) szPickerTriggered[r] = szPickerTriggered[r]||false;
+  renderTimer();
 }
 
 // ══ POLLING ═══════════════════════════════════
@@ -1691,8 +1782,20 @@ function startPolling(){
               if(szPickerOpen) closeSZPicker();
             }
           }
-          if(!wasA&&game){toast('!','Partie','La partie a commence!');showRoundOverlay(1);startZoneCheck();startScoreEngine();}
-          if(game&&prevR&&game.current_round!==prevR){showRoundOverlay(game.current_round);outSecs=0;malusIdx=0;wasOut=false;lastMinuteScored=0;hideZB();}
+          // Lire extra_seconds depuis Supabase
+          if(game && game.extra_seconds !== undefined){
+            extraSeconds = game.extra_seconds || 0;
+          }
+          if(!wasA&&game){
+            szPickerTriggered={2:false,3:false};
+            toast('!','Partie','La partie a commence!');
+            showRoundOverlay(1);startZoneCheck();startScoreEngine();
+          }
+          if(game && prevR && game.current_round !== prevR){
+            showRoundOverlay(game.current_round);
+            outSecs=0;malusIdx=0;wasOut=false;lastMinuteScored=0;hideZB();
+            szPickerTriggered[game.current_round]=false;
+          }
           updatePhase();
         }
       }
@@ -2197,7 +2300,8 @@ async function launchGame(){
       round_started_at: new Date().toISOString(),
       started_at: new Date().toISOString(),
       active_zone: launchConfig.zone,
-      active_subzone: launchConfig.subzones.join(',')
+      active_subzone: launchConfig.subzones.join(','),
+      extra_seconds: 0
     });
     game = Array.isArray(gd) ? gd[0] : gd;
 
@@ -2211,9 +2315,10 @@ async function launchGame(){
       game_id: game.id
     });
 
+    extraSeconds=0;
+    szPickerTriggered={2:false,3:false};
     toast('>','Partie','Partie '+gn+' lancee !');
     showRoundOverlay(1);
-    timerSec=ROUND_DUR[1];
     lastMinuteScored=0;
     updatePhase();
     startZoneCheck();
@@ -2295,28 +2400,41 @@ function closeSZPicker(){
 async function confirmSZPick(){
   if(!szPickerSelected || !game) return;
   const eliminated = szPickerSelected;
+  const r = game.current_round||0;
+  const gs = getGlobalSecs();
+
+  // Vérifier si le choix est tardif (dans la dernière minute avant la deadline)
+  const lateThreshold = SZ_LATE_THRESHOLD[r];
+  const isLate = (lateThreshold !== undefined && gs <= lateThreshold);
+
   closeSZPicker();
 
-  // Calculer les 2 sous-zones restantes
   const current = game.active_subzone.split(',').filter(Boolean);
   const remaining = current.filter(z => z !== eliminated);
 
-  // Sauvegarder dans Supabase
   try{
-    await sbPatch('games?id=eq.'+game.id, {active_subzone: remaining.join(',')});
+    const patch = {active_subzone: remaining.join(',')};
+
+    // Si choix tardif : +60 secondes au chrono global
+    if(isLate){
+      const newExtra = (game.extra_seconds||0) + 60;
+      patch.extra_seconds = newExtra;
+      extraSeconds = newExtra;
+      toast('⏰','Retard','+1 minute ajoutee au chrono !');
+      await sbPost('messages',{type:'alert',content:'⏰ Choix tardif ! +1 minute ajoutee.',game_id:game.id});
+    }
+
+    await sbPatch('games?id=eq.'+game.id, patch);
     game.active_subzone = remaining.join(',');
+    if(patch.extra_seconds !== undefined) game.extra_seconds = patch.extra_seconds;
 
-    // Noms des sous-zones restantes pour le message
-    const remainingNames = remaining.map(z => {
-      const found = ZONE_POLYS.find(p => p.id === z);
-      return found ? found.name : z;
-    }).join(' et ');
-    const eliminatedName = ZONE_POLYS.find(p => p.id === eliminated)?.name || eliminated;
+    const remainingNames = remaining.map(z => ZONE_POLYS.find(p=>p.id===z)?.name||z).join(' et ');
+    const eliminatedName = ZONE_POLYS.find(p=>p.id===eliminated)?.name||eliminated;
 
-    await sbPost('messages', {
-      type: 'announce',
-      content: '📍 Sous-zone supprimee : '+eliminatedName+'. Zones actives pour la prochaine manche : '+remainingNames,
-      game_id: game.id
+    await sbPost('messages',{
+      type:'announce',
+      content:'📍 Sous-zone supprimee : '+eliminatedName+'. Zones actives pour la prochaine manche : '+remainingNames,
+      game_id:game.id
     });
     toast('📍','Sous-zones',remainingNames+' actives !');
   }catch(e){ toast('X','Erreur',''+e.message); }
@@ -2327,7 +2445,7 @@ async function applyTimeoutPenalty(){
   // Vérifier que personne n'a déjà fait le choix pendant qu'on attendait
   // On relit Supabase pour avoir la valeur la plus récente
   try{
-    const gd = await sbGet('games?id=eq.'+game.id+'&select=active_subzone');
+    const gd = await sbGet('games?id=eq.'+game.id+'&select=active_subzone,extra_seconds');
     const freshGame = Array.isArray(gd) ? gd[0] : gd;
     if(!freshGame) return;
     const current = freshGame.active_subzone ? freshGame.active_subzone.split(',').filter(Boolean) : [];
@@ -2372,31 +2490,29 @@ async function applyTimeoutPenalty(){
 async function adminNextPhase(){
   if(!game || game.status!=='active') return;
   const r = game.current_round||0;
+  const gs = getGlobalSecs();
 
-  // Phase "choix sous-zone" : M2 ou M3 et le picker n'a pas encore été traité
-  // L'admin déclenche le picker pour les chasseurs, puis attend
-  // Si le picker est déjà ouvert (chasseurs en train de choisir) → on force le timeout
+  // Si le picker est ouvert : forcer la fin
   if(szPickerOpen){
-    // Forcer la fin du picker : fermer + appliquer malus + avancer
     closeSZPicker();
     await applyTimeoutPenalty();
-    await autoNextRound();
-    return;
-  }
-
-  // En M2 ou M3 : déclencher le picker pour les chasseurs (simuler les 3 min)
-  if(r===2 || r===3){
-    // Envoyer le message radio comme si on était à 3 min de la fin
-    await sbPost('messages',{type:'announce',content:'⚔️ Les chasseurs choisissent une sous-zone a supprimer ! (3 min)',game_id:game.id});
-    toast('⚔️','Admin','Picker sous-zone declenche');
-    // Déclencher le picker sur les téléphones des chasseurs via le timer
-    // L'admin voit un label qui indique d'attendre
     updateNextPhaseLabel();
     return;
   }
 
-  // Sinon : passer simplement à la manche suivante
-  await autoNextRound();
+  // En M2 ou M3 et picker pas encore déclenché : le déclencher
+  if((r===2 || r===3) && !szPickerTriggered[r]){
+    szPickerTriggered[r] = true;
+    await sbPost('messages',{type:'announce',content:'⚔️ Les chasseurs choisissent une sous-zone a supprimer ! (3 min)',game_id:game.id});
+    toast('⚔️','Admin','Picker sous-zone declenche pour les chasseurs');
+    updateNextPhaseLabel();
+    return;
+  }
+
+  // Sinon : avancer à la prochaine manche
+  const nextR = r + 1;
+  if(nextR > 4){ await adminStopGame(); return; }
+  await advanceRound(nextR);
 }
 
 function updateNextPhaseLabel(){
@@ -2431,7 +2547,7 @@ async function adminStartGame(){
     for(const t of teams){
       if(t.status==='eliminated'){await sbPatch('teams?id=eq.'+t.id,{status:'active',score:0});t.status='active';t.score=0;}
     }
-    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);timerSec=ROUND_DUR[1];lastMinuteScored=0;updatePhase();startZoneCheck();startScoreEngine();
+    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);lastMinuteScored=0;extraSeconds=0;szPickerTriggered={2:false,3:false};updatePhase();startZoneCheck();startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
     document.getElementById('btn-next-phase').disabled=false;
     updateNextPhaseLabel();
