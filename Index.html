@@ -1969,6 +1969,13 @@ function startPolling(){
           }
           // Mettre à jour couleurs carte si active_subzone ou active_zone changé
           updateZoneColors();
+          // Fin de partie détectée côté joueur : supprimer le surlignage des sous-zones
+          if(wasA && !game){
+            if(leafMap && mapLayers.activeSubzoneLayer){
+              leafMap.removeLayer(mapLayers.activeSubzoneLayer);
+              mapLayers.activeSubzoneLayer=null;
+            }
+          }
           if(!wasA&&game){
             szPickerTriggered={2:false,3:false};
             toast('!','Partie','La partie a commence!');
@@ -2908,7 +2915,13 @@ async function adminStopGame(){
     game.status='finished';
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
-    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;document.getElementById('btn-next-phase').disabled=true;updatePhase();updateZoneColors();
+    hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;document.getElementById('btn-next-phase').disabled=true;
+    // Supprimer le surlignage des sous-zones actives
+    if(leafMap && mapLayers.activeSubzoneLayer){
+      leafMap.removeLayer(mapLayers.activeSubzoneLayer);
+      mapLayers.activeSubzoneLayer=null;
+    }
+    updatePhase();updateZoneColors();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
