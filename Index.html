@@ -987,7 +987,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <button class="nbtn on" onclick="navClick(this,'')"><span class="ni">&#x1F5FA;</span><span>Carte</span></button>
       <button class="nbtn" onclick="navClick(this,'scores')"><span class="ni">&#x1F4CA;</span><span>Scores</span></button>
       <button class="nbtn" onclick="navClick(this,'teams')"><span class="ni">&#x1F465;</span><span>Equipes</span></button>
-      <button class="nbtn" onclick="navClick(this,'chat')" id="nav-chat-btn"><span class="ni" style="position:relative">&#x1F4FB;<span id="radio-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:var(--red);color:#fff;border-radius:50%;font-size:9px;font-weight:900;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;font-family:monospace">0</span></span><span>Radio</span></button>
+      <button class="nbtn" onclick="navClick(this,'chat')" id="nav-chat-btn"><span class="ni" style="position:relative">&#x1F4FB;<span id="radio-badge" style="display:none;position:absolute;top:-3px;right:-3px;background:var(--red);border-radius:50%;width:9px;height:9px"></span></span><span>Radio</span></button>
       <button class="nbtn" id="nadmin" style="display:none" onclick="navClick(this,'admin')"><span class="ni">&#x2699;&#xFE0F;</span><span>Admin</span></button>
     </div>
   </div>
@@ -2188,66 +2188,60 @@ async function awardBadgesEndOfParty(){
   if(!game) return;
   const newBadges = [];
 
-  // 1. FANTOMES: all chasse teams never found this party
-  const neverFound = teams.filter(t => t.role==='chasse' && t.status==='active');
-  for(const t of neverFound){
-    if(!(t.badges||[]).includes('fantomes')){
-      newBadges.push({team:t, badgeId:'fantomes', pts:700, immediate:true});
-    }
-  }
+  // Helper : ajouter un badge seulement si l'équipe ne l'a pas déjà
+  const push = (team, badgeId) => {
+    if(team && !(team.badges||[]).includes(badgeId))
+      newBadges.push({team, badgeId});
+  };
 
-  // 2. TRAQUE ECLAIR: fastest discovery in M2
-  if(badgeStats.fastestDiscoveryTeam){
-    const t = teams.find(x => x.id===badgeStats.fastestDiscoveryTeam);
-    if(t && !(t.badges||[]).includes('eclair')){
-      newBadges.push({team:t, badgeId:'eclair', pts:0, immediate:false}); // pts at event end
-    }
-  }
+  // 1. EN FEU : meilleur score de cette partie
+  const sorted = [...teams].sort((a,b)=>(b.score||0)-(a.score||0));
+  if(sorted.length > 0) push(sorted[0], 'enfeu');
 
-  // 3. NOMADES: most distance
+  // 2. NOMADES : plus grande distance GPS cette partie
   const distEntries = Object.entries(badgeStats.teamDistances);
   if(distEntries.length > 0){
     distEntries.sort((a,b) => b[1]-a[1]);
-    const topTeamId = distEntries[0][0];
-    const t = teams.find(x => x.id===topTeamId);
-    if(t && !(t.badges||[]).includes('nomades')){
-      newBadges.push({team:t, badgeId:'nomades', pts:0, immediate:false});
-    }
+    const t = teams.find(x => x.id===distEntries[0][0]);
+    push(t, 'nomades');
   }
 
-  // 4. DISCRETION: best hidden time / distance ratio
-  let bestRatio = 0, bestDiscreteTeam = null;
-  teams.filter(t => t.role==='chasse').forEach(t => {
+  // 3. TORTUE : plus petite distance GPS (parmi ceux qui ont bougé)
+  const movedEntries = distEntries.filter(e => e[1] > 0);
+  if(movedEntries.length > 0){
+    movedEntries.sort((a,b) => a[1]-b[1]);
+    const t = teams.find(x => x.id===movedEntries[0][0]);
+    push(t, 'tortue');
+  }
+
+  // 4. MAITRE DE LA DISCRETION : temps moyen le plus long avant d'être trouvé
+  // (uniquement pour les équipes chassées qui ont été trouvées)
+  let bestHidden = 0, bestHiddenTeam = null;
+  teams.filter(t => t.role==='chasse' && t.status==='eliminated').forEach(t => {
     const ht = badgeStats.teamHiddenTime[t.id]||0;
-    const dist = Math.max(badgeStats.teamDistances[t.id]||1, 1);
-    const ratio = ht / dist;
-    if(ratio > bestRatio){ bestRatio=ratio; bestDiscreteTeam=t; }
+    if(ht > bestHidden){ bestHidden=ht; bestHiddenTeam=t; }
   });
-  if(bestDiscreteTeam && !(bestDiscreteTeam.badges||[]).includes('discretion')){
-    newBadges.push({team:bestDiscreteTeam, badgeId:'discretion', pts:0, immediate:false});
-  }
+  push(bestHiddenTeam, 'discretion');
 
-  // 5. COMPLETE: best overall score this party
-  const sorted = [...teams].sort((a,b)=>(b.score||0)-(a.score||0));
-  if(sorted.length > 0){
-    const top = sorted[0];
-    if(!(top.badges||[]).includes('complete')){
-      newBadges.push({team:top, badgeId:'complete', pts:0, immediate:false});
-    }
-  }
+  // 5. HORS-ZONE : plus grand total de malus
+  let mostMalus = 0, mostMalusTeam = null;
+  teams.forEach(t => {
+    const oz = badgeStats.teamOutOfZoneTime[t.id]||0;
+    if(oz > mostMalus){ mostMalus=oz; mostMalusTeam=t; }
+  });
+  push(mostMalusTeam, 'horszone');
 
-  // Apply badges
+  // Note : REGULIERE est calculée à la fin de l'événement (sur toutes les parties)
+
+  // Appliquer les badges
   for(const nb of newBadges){
-    const currentBadges = nb.team.badges||[];
-    const updatedBadges = [...currentBadges, nb.badgeId];
+    const def = BADGE_DEFS.find(x=>x.id===nb.badgeId);
+    if(!def) continue;
+    const updatedBadges = [...(nb.team.badges||[]), nb.badgeId];
     await sbPatch('teams?id=eq.'+nb.team.id, {badges: updatedBadges});
     nb.team.badges = updatedBadges;
-    if(nb.immediate && nb.pts > 0){
-      await addScore(nb.team.id, nb.pts, 'Badge '+nb.badgeId);
-    }
-    const def = BADGE_DEFS.find(x=>x.id===nb.badgeId);
-    await sbPost('messages',{type:'announce', content:def.icon+' Badge '+def.name+' → '+nb.team.name+(nb.immediate?' (+'+def.pts+' pts)':'  (points fin evenement)'), game_id:game.id});
-    toast(def.icon, 'Badge !', nb.team.name+' - '+def.name);
+    await sbPost('messages',{type:'announce', content:def.icon+' Badge '+def.name+' attribue a '+nb.team.name+' ! (+'+def.pts+' pts en fin d\'evenement)', game_id:game.id});
+    toast(def.icon, 'Badge !', nb.team.name+' — '+def.name);
   }
   buildTeams();renderBadgeDrawer();
 }
@@ -2270,12 +2264,7 @@ let unreadCount = 0;        // nb de messages non lus
 function updateRadioBadge(){
   const badge = document.getElementById('radio-badge');
   if(!badge) return;
-  if(unreadCount > 0){
-    badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
-    badge.style.display = 'block';
-  } else {
-    badge.style.display = 'none';
-  }
+  badge.style.display = unreadCount > 0 ? 'block' : 'none';
 }
 
 async function refreshChat(){
@@ -2289,23 +2278,23 @@ async function refreshChat(){
 
     // Compter les nouveaux messages non lus (seulement si la radio n'est pas ouverte)
     const radioOpen = document.getElementById('d-chat').classList.contains('on');
-    if(lastSeenMsgId !== null && !radioOpen){
-      const newMsgs = visible.filter(m => m.id > lastSeenMsgId);
-      if(newMsgs.length > 0){
-        unreadCount += newMsgs.length;
+    // Pastille simple : s'allume dès qu'il y a un nouveau message non lu
+    if(visible.length > 0){
+      const latestId = visible[0].id;
+      if(lastSeenMsgId === null){
+        // Premier chargement : tout est lu
+        lastSeenMsgId = latestId;
+      } else if(!radioOpen && latestId !== lastSeenMsgId){
+        // Nouveau message et radio fermée : allumer la pastille
+        unreadCount = 1;
         updateRadioBadge();
       }
-    }
-    // Si la radio est ouverte : tout est lu
-    if(radioOpen){
-      unreadCount = 0;
-      updateRadioBadge();
-      if(visible.length > 0) lastSeenMsgId = visible[0].id;
-    } else if(lastSeenMsgId === null && visible.length > 0){
-      // Premier chargement : marquer tout comme lu
-      lastSeenMsgId = visible[0].id;
-    } else if(visible.length > 0){
-      lastSeenMsgId = visible[0].id;
+      if(radioOpen){
+        // Radio ouverte : tout est lu, éteindre la pastille
+        unreadCount = 0;
+        lastSeenMsgId = latestId;
+        updateRadioBadge();
+      }
     }
 
     document.getElementById('chat-list').innerHTML = visible.map(m=>`<div class="cmsg ${m.type==='capture'?'cap':m.type==='announce'?'ann':'ale'}"><div class="cmhead"><span class="cmtype">${m.type==='capture'?'Capture':m.type==='announce'?'Annonce':'Alerte'}</span><span class="cmtime">${new Date(m.created_at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div><div class="cmtext">${m.content}</div></div>`).join('');
