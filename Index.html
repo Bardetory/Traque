@@ -923,7 +923,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
   <div id="layer-ctrl">
     <div class="lbtn on" id="lbtn-chemins" onclick="toggleLayer('chemins')">Chemins</div>
     <div class="lbtn on" id="lbtn-eau" onclick="toggleLayer('eau')">Eau</div>
-    <div class="lbtn on" id="lbtn-limite" onclick="toggleLayer('limite')">Limite</div>
+    <div class="lbtn" id="lbtn-limite" onclick="toggleLayer('limite')">Limite</div>
     <div class="lbtn" id="lbtn-zones-all" onclick="toggleAllZones()">Zones</div>
     <div class="lbtn" id="lbtn-zone-0" onclick="toggleZoneFamily(0)">LUsine</div>
     <div class="lbtn" id="lbtn-zone-1" onclick="toggleZoneFamily(1)">La bordure</div>
@@ -1244,7 +1244,7 @@ let outSecs=0,malusIdx=0,wasOut=false,myLat=null,myLng=null;
 let myConnectedAt=null; // timestamp de connexion pour priorité multi-connexion
 let leafMap=null,myMarker=null,myAccCircle=null,teamMarkers={};
 let mapLayers={chemins:null,eau:null,limite:null,subzone:null};
-let layerVisible={chemins:true,eau:true,limite:true};
+let layerVisible={chemins:true,eau:true,limite:false};
 let pendingFoundBy=null; // team id of hunter who found us
 let lastMinuteScored=0; // track last minute we gave points
 
@@ -1349,8 +1349,30 @@ function initMap(){
     const fc={type:'FeatureCollection',features:zones.map(z=>({type:'Feature',properties:{zone_name:z.name},geometry:{type:'Polygon',coordinates:[z.coords]}}))};
     mapLayers.zoneFamilies[fam]=L.geoJSON(fc,{style:{color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07},onEachFeature:(ft,l)=>l.bindTooltip(ft.properties.zone_name,{permanent:false,direction:'center',className:'zone-tooltip'})});
   });
-  // Afficher toutes les zones en couleur au démarrage (pas de partie active)
-  setTimeout(updateZoneColors, 100);
+  // État par défaut : zones ON, limite OFF
+  // Retirer la limite de la carte
+  if(mapLayers.limite) leafMap.removeLayer(mapLayers.limite);
+  // Activer toutes les zones
+  setTimeout(()=>{
+    activateAllZonesByDefault();
+    updateZoneColors();
+  }, 100);
+}
+
+function activateAllZonesByDefault(){
+  zonesAllVisible = true;
+  Object.keys(ZONE_FAMILY_COLORS).forEach((fam, i)=>{
+    zoneFamilyVisible[fam] = true;
+    const layer = mapLayers.zoneFamilies[fam];
+    if(layer && !leafMap.hasLayer(layer)) leafMap.addLayer(layer);
+    const el = document.getElementById('lbtn-zone-'+i);
+    if(el) el.classList.add('on');
+  });
+  document.getElementById('lbtn-zones-all').classList.add('on');
+  // S'assurer que la limite est bien off
+  layerVisible.limite = false;
+  if(mapLayers.limite && leafMap.hasLayer(mapLayers.limite)) leafMap.removeLayer(mapLayers.limite);
+  document.getElementById('lbtn-limite').classList.remove('on');
 }
 
 let zonesAllVisible=false,zoneFamilyVisible={};
@@ -1971,12 +1993,13 @@ function startPolling(){
           }
           // Mettre à jour couleurs carte si active_subzone ou active_zone changé
           updateZoneColors();
-          // Fin de partie détectée côté joueur : supprimer le surlignage des sous-zones
+          // Fin de partie détectée côté joueur : supprimer le surlignage et réactiver les zones
           if(wasA && !game){
             if(leafMap && mapLayers.activeSubzoneLayer){
               leafMap.removeLayer(mapLayers.activeSubzoneLayer);
               mapLayers.activeSubzoneLayer=null;
             }
+            activateAllZonesByDefault();
           }
           if(!wasA&&game){
             szPickerTriggered={2:false,3:false};
@@ -2923,7 +2946,9 @@ async function adminStopGame(){
       leafMap.removeLayer(mapLayers.activeSubzoneLayer);
       mapLayers.activeSubzoneLayer=null;
     }
-    updatePhase();updateZoneColors();
+    updatePhase();
+    activateAllZonesByDefault();
+    updateZoneColors();
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
