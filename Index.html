@@ -1110,23 +1110,9 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <button class="abtn" id="btn-next-phase" onclick="adminNextPhase()" disabled style="border-color:rgba(255,184,48,.4);color:var(--amber)"><span class="ai">&#x23ED;</span> Phase suivante</button>
       <div id="next-phase-label" style="font-family:monospace;font-size:9px;color:var(--text-dim);letter-spacing:1px;margin-top:2px;text-align:center"></div>
     </div>
-    <div class="asec">
-      <div class="asectitle">Decouverte manuelle (litige)</div>
-      <select class="tsel" id="disc-hunter"></select>
-      <select class="tsel" id="disc-prey"></select>
-      <button class="abtn" onclick="adminValidateDiscovery()"><span class="ai">&#x1F3AF;</span> Valider la decouverte</button>
-    </div>
-    <div class="asec">
-      <div class="asectitle">Gestion des equipes</div>
-      <button class="abtn ok" onclick="openCreateTeam()"><span class="ai">+</span> Creer une equipe</button>
-      <div id="admin-team-manage-list"></div>
-    </div>
-    <div class="asec">
-      <div class="asectitle">Roles</div>
-      <select class="tsel" id="role-team"></select>
-      <select class="tsel" id="role-val"><option value="chasse">Chasse</option><option value="chasseur">Chasseur</option></select>
-      <button class="abtn" onclick="adminSetRole()">Appliquer le role</button>
-    </div>
+
+
+
     <div class="asec">
       <div class="asectitle">Elimination manuelle</div>
       <select class="tsel" id="elim-team"></select>
@@ -1143,18 +1129,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <div class="asectitle">Visibilite</div>
       <button class="abtn" onclick="adminToggleCount()"><span id="tc-lbl">Masquer nb equipes</span></button>
     </div>
-    <div class="asec">
-      <div class="asectitle">Sous-zone Manche 3</div>
-      <select class="tsel" id="subzone-select">
-        <optgroup label="L usine"><option value="P">L usine P</option><option value="Q">L usine Q</option><option value="R">L usine R</option><option value="S">L usine S</option></optgroup>
-        <optgroup label="La bordure"><option value="M">La bordure M</option><option value="N">La bordure N</option><option value="O">La bordure O</option></optgroup>
-        <optgroup label="La lisière"><option value="A">La lisière A</option><option value="B">La lisière B</option><option value="C">La lisière C</option><option value="D">La lisière D</option><option value="E">La lisière E</option><option value="F">La lisière F</option></optgroup>
-        <optgroup label="Le lac"><option value="T">Le lac T</option><option value="U">Le lac U</option><option value="V">Le lac V</option><option value="W">Le lac W</option><option value="X">Le lac X</option><option value="Y">Le lac Y</option></optgroup>
-        <optgroup label="Le marais"><option value="G">Le marais G</option><option value="H">Le marais H</option><option value="I">Le marais I</option><option value="J">Le marais J</option><option value="K">Le marais K</option><option value="L">Le marais L</option></optgroup>
-      </select>
-      <button class="abtn ok" onclick="adminActivateSubzone()"><span class="ai">&#x1F4CD;</span> Activer cette sous-zone</button>
-      <div id="active-subzone-display" style="font-family:monospace;font-size:10px;color:var(--text-dim);margin-top:6px;letter-spacing:1px">Aucune sous-zone active</div>
-    </div>
+
     <div class="asec">
       <div class="asectitle">Fin d evenement</div>
       <button class="abtn ok" onclick="adminEndEvent()"><span class="ai">🏆</span> Distribuer points badges</button>
@@ -2289,11 +2264,30 @@ async function awardBadgesEndOfEvent(){
     }
   }
 }
+let lastSeenMsgId = null; // dernier message vu pour les notifications
+
 async function refreshChat(){
-  try{const msgs=await sbGet('messages?select=*&order=created_at.desc&limit=50');
-    if(!Array.isArray(msgs)||!msgs.length){document.getElementById('chat-list').innerHTML='<div style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">Aucun message</div>';return;}
-    // Filter out internal discovery messages
+  try{
+    const msgs=await sbGet('messages?select=*&order=created_at.desc&limit=50');
+    if(!Array.isArray(msgs)||!msgs.length){
+      document.getElementById('chat-list').innerHTML='<div style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">Aucun message</div>';
+      return;
+    }
     const visible=msgs.filter(m=>!m.content.startsWith('DECOUVERTE:'));
+
+    // Notifications pour les nouveaux messages
+    if(lastSeenMsgId !== null){
+      const newMsgs = visible.filter(m => m.id > lastSeenMsgId);
+      newMsgs.forEach(m => {
+        const icon = m.type==='capture'?'🚨':m.type==='alert'?'⚠️':'📻';
+        const label = m.type==='capture'?'Capture':m.type==='alert'?'Alerte':'Radio';
+        // Tronquer le contenu si trop long
+        const content = m.content.length > 60 ? m.content.substring(0,57)+'...' : m.content;
+        toast(icon, label, content);
+      });
+    }
+    if(visible.length > 0) lastSeenMsgId = visible[0].id;
+
     document.getElementById('chat-list').innerHTML=visible.map(m=>`<div class="cmsg ${m.type==='capture'?'cap':m.type==='announce'?'ann':'ale'}"><div class="cmhead"><span class="cmtype">${m.type==='capture'?'Capture':m.type==='announce'?'Annonce':'Alerte'}</span><span class="cmtime">${new Date(m.created_at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div><div class="cmtext">${m.content}</div></div>`).join('');
   }catch(e){}
 }
@@ -2419,7 +2413,9 @@ async function subModalConfirm(){
 }
 
 function buildAdminSelects(){
-  ['role-team','elim-team','score-team'].forEach(id=>{document.getElementById(id).innerHTML=teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');});
+  // Uniquement score-team reste dans le panneau admin
+  const el=document.getElementById('score-team');
+  if(el) el.innerHTML=teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
 }
 
 async function adminValidateDiscovery(){
@@ -2948,7 +2944,24 @@ async function confirmReset(){
 }
 async function adminSetRole(){const tid=document.getElementById('role-team').value,role=document.getElementById('role-val').value;try{await sbPatch('teams?id=eq.'+tid,{role});const t=teams.find(t=>t.id===tid);if(t){t.role=role;buildTeams();}toast('~','Role','Mis a jour');closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
 async function adminEliminate(){const tid=document.getElementById('elim-team').value;try{await sbPatch('teams?id=eq.'+tid,{status:'eliminated'});const t=teams.find(t=>t.id===tid);if(t){t.status='eliminated';await sbPost('messages',{type:'alert',content:t.name+' eliminee par admin',game_id:game?.id});buildTeams();toast('X',t.name,'Eliminee');}closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
-async function adminCorrectScore(){const tid=document.getElementById('score-team').value,pts=parseInt(document.getElementById('score-pts').value),rsn=document.getElementById('score-rsn').value||'Correction admin';if(isNaN(pts)){toast('!','Admin','Entrez un nombre');return;}try{const t=teams.find(t=>t.id===tid);const ns=Math.max(0,(t?.score||0)+pts);await sbPatch('teams?id=eq.'+tid,{score:ns});await sbPost('scores',{team_id:tid,game_id:game?.id,points:pts,reason:rsn});if(t){t.score=ns;buildTeams();}toast('E','Score',(pts>0?'+':'')+pts+' pts');closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
+async function adminCorrectScore(){
+  const tid=document.getElementById('score-team').value;
+  const pts=parseInt(document.getElementById('score-pts').value);
+  const rsn=document.getElementById('score-rsn').value||'Correction admin';
+  if(isNaN(pts)){toast('!','Admin','Entrez un nombre');return;}
+  try{
+    const t=teams.find(t=>t.id===tid);
+    const ns=Math.max(0,(t?.score||0)+pts);
+    await sbPatch('teams?id=eq.'+tid,{score:ns});
+    await sbPost('scores',{team_id:tid,game_id:game?.id,points:pts,reason:rsn});
+    // Message radio pour informer tout le monde
+    const sign=pts>0?'+':'';
+    await sbPost('messages',{type:'announce',content:'🔧 Correction de score — '+( t?.name||'?')+' : '+sign+pts+' pts ('+rsn+')',game_id:game?.id});
+    if(t){t.score=ns;buildTeams();}
+    toast('E','Score',sign+pts+' pts');
+    closeDrawer('admin');
+  }catch(e){toast('X','Erreur',''+e.message);}
+}
 function adminToggleCount(){showCount=!showCount;document.getElementById('tc-lbl').textContent=showCount?'Masquer nb equipes':'Afficher nb equipes';updateCount();}
 
 function openDrawer(id){document.getElementById('d-'+id).classList.add('on');}
