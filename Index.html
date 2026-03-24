@@ -1455,20 +1455,25 @@ function updateTeamMarkers(){
   });
 }
 
-function showGPSBanner(show){
+function showGPSBanner(show, msg){
   const el=document.getElementById('gps-banner');
-  if(el) el.style.display=show?'block':'none';
+  if(!el) return;
+  el.style.display=show?'block':'none';
+  if(msg) el.textContent='📡 '+msg;
 }
 
 function startGPS(){
-  if(!navigator.geolocation||CU.type==='admin')return;
-  // Afficher la bannière tant que le GPS n'est pas reçu
-  showGPSBanner(true);
+  if(CU.type==='admin') return;
+  if(!navigator.geolocation){
+    showGPSBanner(true,'GPS non disponible sur ce navigateur');
+    return;
+  }
+  showGPSBanner(true,'Recherche de votre position...');
   gpsId=navigator.geolocation.watchPosition(async pos=>{
-    // GPS reçu : masquer la bannière
     showGPSBanner(false);
     myLat=pos.coords.latitude;myLng=pos.coords.longitude;
-    const icon=L.divIcon({className:'',html:`<div style="width:16px;height:16px;background:${CU.color};border:2px solid #0d1f0f;border-radius:50%;box-shadow:0 0 14px ${CU.color}cc"></div>`,iconSize:[16,16],iconAnchor:[8,8]});
+    const iconHtml='<div style="width:16px;height:16px;background:'+CU.color+';border:2px solid #0d1f0f;border-radius:50%;box-shadow:0 0 14px '+CU.color+'cc"></div>';
+    const icon=L.divIcon({className:'',html:iconHtml,iconSize:[16,16],iconAnchor:[8,8]});
     if(myMarker)leafMap.removeLayer(myMarker);
     myMarker=L.marker([myLat,myLng],{icon,zIndexOffset:1000}).addTo(leafMap);
     if(myAccCircle)leafMap.removeLayer(myAccCircle);
@@ -1478,9 +1483,11 @@ function startGPS(){
     updateTeamMarkers();
     try{await sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({team_id:myId,latitude:myLat,longitude:myLng,accuracy:pos.coords.accuracy,updated_at:new Date().toISOString(),connected_at:myConnectedAt}),headers:{...H,'Prefer':'resolution=merge-duplicates'}});}catch(e){}
   },err=>{
-    // Erreur GPS : afficher la bannière
-    showGPSBanner(true);
-  },{enableHighAccuracy:true,maximumAge:2000,timeout:10000});
+    const msgs={1:'Permission GPS refusee — autorisez dans votre navigateur',2:'Position indisponible',3:'Timeout GPS — reessai...'};
+    showGPSBanner(true, msgs[err.code]||'GPS indisponible');
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+}
+
 }
 
 // ══ SCORE ENGINE ══════════════════════════════
