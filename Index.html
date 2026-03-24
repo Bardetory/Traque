@@ -987,7 +987,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <button class="nbtn on" onclick="navClick(this,'')"><span class="ni">&#x1F5FA;</span><span>Carte</span></button>
       <button class="nbtn" onclick="navClick(this,'scores')"><span class="ni">&#x1F4CA;</span><span>Scores</span></button>
       <button class="nbtn" onclick="navClick(this,'teams')"><span class="ni">&#x1F465;</span><span>Equipes</span></button>
-      <button class="nbtn" onclick="navClick(this,'chat')"><span class="ni">&#x1F4FB;</span><span>Radio</span></button>
+      <button class="nbtn" onclick="navClick(this,'chat')" id="nav-chat-btn"><span class="ni" style="position:relative">&#x1F4FB;<span id="radio-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:var(--red);color:#fff;border-radius:50%;font-size:9px;font-weight:900;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;font-family:monospace">0</span></span><span>Radio</span></button>
       <button class="nbtn" id="nadmin" style="display:none" onclick="navClick(this,'admin')"><span class="ni">&#x2699;&#xFE0F;</span><span>Admin</span></button>
     </div>
   </div>
@@ -2264,31 +2264,51 @@ async function awardBadgesEndOfEvent(){
     }
   }
 }
-let lastSeenMsgId = null; // dernier message vu pour les notifications
+let lastSeenMsgId = null;  // id du dernier message vu
+let unreadCount = 0;        // nb de messages non lus
+
+function updateRadioBadge(){
+  const badge = document.getElementById('radio-badge');
+  if(!badge) return;
+  if(unreadCount > 0){
+    badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+    badge.style.display = 'block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
 
 async function refreshChat(){
   try{
-    const msgs=await sbGet('messages?select=*&order=created_at.desc&limit=50');
+    const msgs = await sbGet('messages?select=*&order=created_at.desc&limit=50');
     if(!Array.isArray(msgs)||!msgs.length){
-      document.getElementById('chat-list').innerHTML='<div style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">Aucun message</div>';
+      document.getElementById('chat-list').innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">Aucun message</div>';
       return;
     }
-    const visible=msgs.filter(m=>!m.content.startsWith('DECOUVERTE:'));
+    const visible = msgs.filter(m => !m.content.startsWith('DECOUVERTE:'));
 
-    // Notifications pour les nouveaux messages
-    if(lastSeenMsgId !== null){
+    // Compter les nouveaux messages non lus (seulement si la radio n'est pas ouverte)
+    const radioOpen = document.getElementById('d-chat').classList.contains('on');
+    if(lastSeenMsgId !== null && !radioOpen){
       const newMsgs = visible.filter(m => m.id > lastSeenMsgId);
-      newMsgs.forEach(m => {
-        const icon = m.type==='capture'?'🚨':m.type==='alert'?'⚠️':'📻';
-        const label = m.type==='capture'?'Capture':m.type==='alert'?'Alerte':'Radio';
-        // Tronquer le contenu si trop long
-        const content = m.content.length > 60 ? m.content.substring(0,57)+'...' : m.content;
-        toast(icon, label, content);
-      });
+      if(newMsgs.length > 0){
+        unreadCount += newMsgs.length;
+        updateRadioBadge();
+      }
     }
-    if(visible.length > 0) lastSeenMsgId = visible[0].id;
+    // Si la radio est ouverte : tout est lu
+    if(radioOpen){
+      unreadCount = 0;
+      updateRadioBadge();
+      if(visible.length > 0) lastSeenMsgId = visible[0].id;
+    } else if(lastSeenMsgId === null && visible.length > 0){
+      // Premier chargement : marquer tout comme lu
+      lastSeenMsgId = visible[0].id;
+    } else if(visible.length > 0){
+      lastSeenMsgId = visible[0].id;
+    }
 
-    document.getElementById('chat-list').innerHTML=visible.map(m=>`<div class="cmsg ${m.type==='capture'?'cap':m.type==='announce'?'ann':'ale'}"><div class="cmhead"><span class="cmtype">${m.type==='capture'?'Capture':m.type==='announce'?'Annonce':'Alerte'}</span><span class="cmtime">${new Date(m.created_at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div><div class="cmtext">${m.content}</div></div>`).join('');
+    document.getElementById('chat-list').innerHTML = visible.map(m=>`<div class="cmsg ${m.type==='capture'?'cap':m.type==='announce'?'ann':'ale'}"><div class="cmhead"><span class="cmtype">${m.type==='capture'?'Capture':m.type==='announce'?'Annonce':'Alerte'}</span><span class="cmtime">${new Date(m.created_at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div><div class="cmtext">${m.content}</div></div>`).join('');
   }catch(e){}
 }
 
@@ -2964,7 +2984,15 @@ async function adminCorrectScore(){
 }
 function adminToggleCount(){showCount=!showCount;document.getElementById('tc-lbl').textContent=showCount?'Masquer nb equipes':'Afficher nb equipes';updateCount();}
 
-function openDrawer(id){document.getElementById('d-'+id).classList.add('on');}
+function openDrawer(id){
+  document.getElementById('d-'+id).classList.add('on');
+  // Réinitialiser le compteur radio quand on l'ouvre
+  if(id==='chat'){
+    unreadCount=0;
+    updateRadioBadge();
+    if(lastSeenMsgId===null) refreshChat();
+  }
+}
 function closeDrawer(id){document.getElementById('d-'+id).classList.remove('on');}
 function navClick(btn,id){document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');if(id)openDrawer(id);}
 function toast(icon,title,text){const el=document.createElement('div');el.className='toast';el.innerHTML='<div class="ticon">'+icon+'</div><div class="ttext"><div class="ttitle">'+title+'</div><div>'+text+'</div></div>';document.getElementById('toasts').appendChild(el);setTimeout(()=>el.remove(),3300);}
