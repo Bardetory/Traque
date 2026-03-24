@@ -2118,12 +2118,12 @@ function showBadgeDetail(badgeId){
   // Modal générique pour tous les badges
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
-  overlay.innerHTML = '<div style="background:var(--forest-mid);border:1px solid var(--border);border-radius:2px;padding:24px;width:calc(100% - 32px);max-width:380px;max-height:85vh;overflow-y:auto">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+  overlay.innerHTML = '<div style="position:relative;background:var(--forest-mid);border:1px solid var(--border);border-radius:2px;padding:24px;width:calc(100% - 32px);max-width:380px;max-height:85vh;overflow-y:auto">'
+    +'<button id="badge-close-btn" style="position:absolute;top:12px;right:12px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:22px;line-height:1">&#x2715;</button>'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-right:30px">'
     +'<span style="font-size:22px">'+b.icon+'</span>'
-    +'<button class="xbtn" onclick="document.getElementById(\'badge-overlay\').remove()" style="top:16px;right:16px">&#x2715;</button>'
+    +'<div style="font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--acid)">'+b.name+'</div>'
     +'</div>'
-    +'<div style="font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--acid);margin-bottom:6px">'+b.name+'</div>'
     +'<div style="font-family:monospace;font-size:10px;color:var(--amber);letter-spacing:1px;margin-bottom:14px">'+b.pts+' pts</div>'
     +'<p style="font-size:12px;color:var(--text);line-height:1.7;margin-bottom:0">'+b.desc+'</p>'
     + tableHtml
@@ -2131,6 +2131,8 @@ function showBadgeDetail(badgeId){
     +'</div>';
   document.body.appendChild(overlay);
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+  // Wire close button after DOM insertion
+  setTimeout(()=>{ const btn=document.getElementById('badge-close-btn'); if(btn) btn.onclick=()=>overlay.remove(); },0);
 }
 
 // ── BADGE ENGINE ──────────────────────────────
