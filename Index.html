@@ -1396,23 +1396,25 @@ function updateZoneColors(){
     if(!layer) return;
     const col = ZONE_FAMILY_COLORS[fam] || '#7fff4f';
 
-    // Pas de partie active : tout s'affiche en couleur normale
     if(!gameActive || !activeZone){
-      layer.setStyle({color:col, weight:1.5, dashArray:'5 4', fillColor:col, fillOpacity:0.07});
+      // Sans partie : chaque sous-zone affiche sa propre couleur et bordure
+      layer.eachLayer(sl=>{
+        sl.setStyle({color:col,weight:1.5,dashArray:'5 4',fillColor:col,fillOpacity:0.07});
+      });
       return;
     }
 
     if(fam !== activeZone){
-      // Famille non choisie : grisée
-      layer.setStyle({color:'rgba(80,80,80,0.25)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.06)',fillOpacity:0.04});
+      layer.eachLayer(sl=>{
+        sl.setStyle({color:'rgba(80,80,80,0.25)',weight:1,dashArray:'4 6',fillColor:'rgba(60,60,60,0.06)',fillOpacity:0.04});
+      });
     } else {
-      // Famille active : colorer les SZ actives, griser les autres
       const zonesInFamily = ZONE_POLYS_VISUAL.filter(z=>z.family===fam);
       const sublayers = [];
       layer.eachLayer(sl=>sublayers.push(sl));
-      sublayers.forEach((sl, idx)=>{
+      sublayers.forEach((sl,idx)=>{
         const zv = zonesInFamily[idx];
-        const isActive = zv && (activeSZids.length === 0 || activeSZids.includes(zv.id));
+        const isActive = zv && (activeSZids.length===0 || activeSZids.includes(zv.id));
         if(isActive){
           sl.setStyle({color:col,weight:2,dashArray:'5 4',fillColor:col,fillOpacity:0.12});
         } else {
