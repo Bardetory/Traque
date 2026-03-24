@@ -2422,9 +2422,12 @@ async function subModalConfirm(){
 }
 
 function buildAdminSelects(){
-  // Uniquement score-team reste dans le panneau admin
-  const el=document.getElementById('score-team');
-  if(el) el.innerHTML=teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+  const activeTeams = teams.filter(t=>t.status!=='eliminated');
+  const allTeams = teams;
+  const elScore=document.getElementById('score-team');
+  if(elScore) elScore.innerHTML=allTeams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+  const elElim=document.getElementById('elim-team');
+  if(elElim) elElim.innerHTML=activeTeams.map(t=>`<option value="${t.id}">${t.name} (${t.role==='chasseur'?'Chasseur':'Chasse'})</option>`).join('');
 }
 
 async function adminValidateDiscovery(){
@@ -2952,7 +2955,34 @@ async function confirmReset(){
   }catch(e){console.error('Reset error:',e);toast('X','Erreur',''+e.message);}
 }
 async function adminSetRole(){const tid=document.getElementById('role-team').value,role=document.getElementById('role-val').value;try{await sbPatch('teams?id=eq.'+tid,{role});const t=teams.find(t=>t.id===tid);if(t){t.role=role;buildTeams();}toast('~','Role','Mis a jour');closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
-async function adminEliminate(){const tid=document.getElementById('elim-team').value;try{await sbPatch('teams?id=eq.'+tid,{status:'eliminated'});const t=teams.find(t=>t.id===tid);if(t){t.status='eliminated';await sbPost('messages',{type:'alert',content:t.name+' eliminee par admin',game_id:game?.id});buildTeams();toast('X',t.name,'Eliminee');}closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
+async function adminEliminate(){
+  const tid=document.getElementById('elim-team').value;
+  if(!tid){toast('!','Admin','Selectionnez une equipe');return;}
+  try{
+    const prey=teams.find(t=>t.id===tid);
+    if(!prey){toast('!','Admin','Equipe introuvable');return;}
+    await sbPatch('teams?id=eq.'+tid,{status:'eliminated'});
+    prey.status='eliminated';
+    const r=game?.current_round||0;
+    // Donner les points aux chasseurs si partie active
+    if(game&&game.status==='active'&&r>=2&&prey.role==='chasse'){
+      const pts=SCORE_HUNTER[r]||0;
+      const hunters=teams.filter(t=>t.role==='chasseur'&&t.status==='active');
+      for(const h of hunters){
+        const ns=(h.score||0)+pts;
+        await sbPatch('teams?id=eq.'+h.id,{score:ns});
+        await sbPost('scores',{team_id:h.id,game_id:game.id,points:pts,reason:'Litige — '+prey.name+' trouvee (M'+r+')'});
+        h.score=ns;
+      }
+      await sbPost('messages',{type:'alert',content:'🔧 Litige resolu — '+prey.name+' declaree trouvee par admin. +'+pts+' pts aux chasseurs.',game_id:game.id});
+    } else {
+      await sbPost('messages',{type:'alert',content:'🔧 '+prey.name+' eliminee manuellement par admin.',game_id:game?.id});
+    }
+    buildTeams();
+    toast('X',prey.name,'Eliminee (litige)');
+    closeDrawer('admin');
+  }catch(e){toast('X','Erreur',''+e.message);}
+}
 async function adminCorrectScore(){
   const tid=document.getElementById('score-team').value;
   const pts=parseInt(document.getElementById('score-pts').value);
