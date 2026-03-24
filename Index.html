@@ -1213,10 +1213,10 @@ const sbPost=(p,b)=>sb(p,{method:'POST',body:JSON.stringify(b)});
 const sbPatch=(p,b)=>sb(p,{method:'PATCH',body:JSON.stringify(b),prefer:'return=representation'});
 
 // ── CONFIG SCORES ──────────────────────────────
-const SCORE_CHASSE_PER_MIN = 50;      // pts/min non trouvé
-const SCORE_CHASSE_BONUS = 300;       // bonus jamais trouvé
-const SCORE_HUNTER = {2:250,3:180,4:120}; // pts chasseur par manche
-const SCORE_PERFECT_HUNT = 380;       // bonus chasse parfaite
+const SCORE_CHASSE_PER_MIN = 30;      // pts/min non trouvé (V17)
+const SCORE_CHASSE_BONUS = 200;       // bonus jamais trouvé (V17)
+const SCORE_HUNTER = {2:200,3:150,4:100}; // pts chasseur par manche (V17)
+const SCORE_PERFECT_HUNT = 400;       // bonus chasse parfaite (V17)
 
 // ── ROUNDS ─────────────────────────────────────
 const ROUND_NAMES=['','Cache','Recherche Libre','Sous-Zone','Final'];
@@ -1547,7 +1547,7 @@ function selfReportFound(){
   // Créer un modal de confirmation simple
   const overlay = document.createElement('div');
   overlay.id = 'self-report-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
+  overlay.id='badge-overlay';overlay.style.cssText = 'position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--forest-mid);border:2px solid var(--red);border-radius:2px;padding:28px 24px;width:calc(100% - 40px);max-width:320px;text-align:center">
       <div style="font-size:32px;margin-bottom:12px">🚨</div>
@@ -2057,12 +2057,13 @@ function buildBadges(){
 
 // ── BADGE DEFINITIONS ─────────────────────────
 const BADGE_DEFS = [
-  {id:'complete',    icon:'🏆', name:'Equipe la plus complete', pts:800, desc:'Meilleure performance globale (mediane pts/partie)', multi:false, timing:'event'},
-  {id:'eclair',      icon:'⚡', name:'Traque eclair',           pts:750, desc:'Temps de decouverte le plus rapide',                multi:false, timing:'event'},
-  {id:'fantomes',    icon:'🥷', name:'Fantomes',                pts:650, desc:'Equipe chassee jamais trouvee sur une partie',      multi:true,  timing:'party'},
-  {id:'discretion',  icon:'🕵️', name:'Maitre de la discretion', pts:650, desc:'Temps moyen le plus eleve avant d\'etre trouve',   multi:false, timing:'event'},
-  {id:'nomades',     icon:'🗺️', name:'Nomades',                 pts:750, desc:'Plus grande distance GPS parcourue sur l\'evenement', multi:false, timing:'event'},
-];
+  {id:"reguliere",  icon:"🏆", name:"La plus reguliere",       pts:850, desc:"Attribuee a l'equipe avec le meilleur classement moyen sur l'ensemble des parties. Recompense la constance plutot que le pic de performance.", multi:false, timing:"event"},
+  {id:"enfeu",      icon:"🔥", name:"En feu",                  pts:800, desc:"Attribuee a l'equipe ayant realise le meilleur score sur une seule partie. Recompense le pic de performance.", multi:false, timing:"event"},
+  {id:"nomades",    icon:"🗺️", name:"Nomades",                 pts:750, desc:"Attribuee a l'equipe ayant parcouru la plus grande distance GPS totale sur l'evenement. Recompense l'activite physique et les deplacements.", multi:false, timing:"event"},
+  {id:"discretion", icon:"🕵️", name:"Maitre de la discretion", pts:750, desc:"Attribuee a l'equipe chassee avec le temps de survie moyen le plus long avant d'etre trouvee, uniquement sur les parties ou elle a ete trouvee.", multi:false, timing:"event"},
+  {id:"tortue",     icon:"🐢", name:"Tortue",                  pts:650, desc:"Attribuee a l'equipe ayant parcouru la plus petite distance GPS. Un exploit avec le systeme de sous-zones qui force les deplacements.", multi:false, timing:"event"},
+  {id:"horszone",   icon:"🛑", name:"Hors-zone",               pts:450, desc:"Badge honteux attribue a l'equipe ayant accumule le plus grand total de malus hors-zone. Une facon de celebrer ceux qui testent les limites.", multi:false, timing:"event"},
+]
 
 function renderBadgeDrawer(){
   const container = document.getElementById('badge-grid');
@@ -2086,35 +2087,42 @@ function showBadgeDetail(badgeId){
   if(!b) return;
   const allBadges = teams.flatMap(t => (t.badges||[]).map(bid => ({teamId:t.id, teamName:t.name, teamColor:t.color, badgeId:bid})));
   const earners = allBadges.filter(e => e.badgeId === b.id);
+  const earnerHtml = earners.length>0
+    ? '<p style="margin-top:14px;font-size:12px;color:var(--acid)">Gagne par : '+earners.map(e=>'<span style="color:'+e.teamColor+'">'+e.teamName+'</span>').join(', ')+'</p>'
+    : '<p style="margin-top:14px;font-size:12px;color:var(--text-dim)">Pas encore attribue</p>';
 
-  // Badge Nomades : modal avec tableau des distances
-  if(badgeId === 'nomades'){
-    const sorted = [...teams].sort((a,b)=>(b.total_distance||0)-(a.total_distance||0));
-    const rows = sorted.map((t,i)=>`
-      <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
-        <span style="font-family:monospace;font-size:11px;color:var(--text-dim);width:20px">${i+1}</span>
-        <div style="width:8px;height:8px;border-radius:50%;background:${t.color};flex-shrink:0"></div>
-        <span style="flex:1;font-size:13px;font-weight:700;text-transform:uppercase">${t.name}</span>
-        <span style="font-family:monospace;font-size:12px;color:var(--acid)">${Math.round((t.total_distance||0))}m</span>
-      </div>`).join('');
-    const overlay=document.createElement('div');
-    overlay.style.cssText='position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
-    overlay.innerHTML=`
-      <div style="background:var(--forest-mid);border:1px solid var(--border);border-radius:2px;padding:24px;width:calc(100% - 32px);max-width:360px;max-height:80vh;overflow-y:auto">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <span style="font-size:15px;font-weight:900;letter-spacing:2px;text-transform:uppercase">🗺️ Nomades — Distances</span>
-          <button onclick="this.closest('div').parentElement.remove()" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer">✕</button>
-        </div>
-        <p style="font-family:monospace;font-size:10px;color:var(--text-dim);letter-spacing:1px;margin-bottom:12px">DISTANCE TOTALE PARCOURUE (GPS)</p>
-        ${rows}
-        ${earners.length>0?'<p style="margin-top:14px;font-size:12px;color:var(--acid)">Gagne par : '+earners.map(e=>'<span style="color:'+e.teamColor+'">'+e.teamName+'</span>').join(', ')+'</p>':'<p style="margin-top:14px;font-size:12px;color:var(--text-dim)">Pas encore attribue</p>'}
-      </div>`;
-    document.body.appendChild(overlay);
-    overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove(); });
-    return;
+  // Badges avec tableau de classement
+  let tableHtml = '';
+  if(badgeId === 'nomades' || badgeId === 'tortue'){
+    const sorted = badgeId === 'nomades'
+      ? [...teams].sort((a,b)=>(b.total_distance||0)-(a.total_distance||0))
+      : [...teams].sort((a,b)=>(a.total_distance||0)-(b.total_distance||0));
+    const label = badgeId === 'nomades' ? 'DISTANCE TOTALE (GPS)' : 'DISTANCE TOTALE (GPS) — DU MOINS AU PLUS';
+    tableHtml = '<p style="font-family:monospace;font-size:10px;color:var(--text-dim);letter-spacing:1px;margin-bottom:12px;margin-top:12px">'+label+'</p>'
+      + sorted.map((t,i)=>'<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">'
+        +'<span style="font-family:monospace;font-size:11px;color:var(--text-dim);width:20px">'+(i+1)+'</span>'
+        +'<div style="width:8px;height:8px;border-radius:50%;background:'+t.color+';flex-shrink:0"></div>'
+        +'<span style="flex:1;font-size:13px;font-weight:700;text-transform:uppercase">'+t.name+'</span>'
+        +'<span style="font-family:monospace;font-size:12px;color:var(--acid)">'+Math.round((t.total_distance||0))+'m</span>'
+        +'</div>').join('');
   }
 
-  toast(b.icon, b.name, earners.length>0 ? 'Gagne par : '+earners.map(e=>e.teamName).join(', ') : 'Pas encore attribue');
+  // Modal générique pour tous les badges
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
+  overlay.innerHTML = '<div style="background:var(--forest-mid);border:1px solid var(--border);border-radius:2px;padding:24px;width:calc(100% - 32px);max-width:380px;max-height:85vh;overflow-y:auto">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+    +'<span style="font-size:22px">'+b.icon+'</span>'
+    +'<button onclick="document.getElementById(\'badge-overlay\').remove()" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer">✕</button>'
+    +'</div>'
+    +'<div style="font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--acid);margin-bottom:6px">'+b.name+'</div>'
+    +'<div style="font-family:monospace;font-size:10px;color:var(--amber);letter-spacing:1px;margin-bottom:14px">'+b.pts+' pts</div>'
+    +'<p style="font-size:12px;color:var(--text);line-height:1.7;margin-bottom:0">'+b.desc+'</p>'
+    + tableHtml
+    + earnerHtml
+    +'</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
 }
 
 // ── BADGE ENGINE ──────────────────────────────
