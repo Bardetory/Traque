@@ -726,6 +726,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 .ptimer.nogame{color:var(--text-dim);font-size:14px}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 #zone-banner{position:absolute;top:140px;left:50%;transform:translateX(-50%);z-index:500;pointer-events:none;display:none}
+#gps-banner{position:absolute;top:100px;left:50%;transform:translateX(-50%);z-index:510;display:none;background:rgba(239,68,68,.92);border-radius:2px;padding:6px 14px;font-family:monospace;font-size:11px;letter-spacing:1px;color:#fff;white-space:nowrap;pointer-events:none}
 .zbbox{background:rgba(255,60,60,.2);border:1px solid rgba(255,60,60,.6);border-radius:2px;padding:8px 20px;text-align:center;white-space:nowrap;backdrop-filter:blur(4px)}
 .zbtitle{font-family:monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--red);display:block}
 .zbval{font-family:monospace;font-size:24px;font-weight:700;color:var(--red);display:block}
@@ -931,6 +932,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
     <div class="lbtn" id="lbtn-zone-4" onclick="toggleZoneFamily(4)">Le marais</div>
   </div>
 
+  <div id="gps-banner">📡 Position GPS non disponible</div>
   <div id="zone-banner">
     <div class="zbbox">
       <span class="zbgrace" id="zb-grace">Sortie de zone!</span>
@@ -1249,6 +1251,7 @@ let extraSeconds=0;        // minutes bonus ajoutées (lues depuis Supabase)
 let szPickerTriggered={2:false,3:false}; // évite de déclencher le picker 2x
 let showCount=true,myId=null;
 let outSecs=0,malusIdx=0,wasOut=false,myLat=null,myLng=null;
+let myConnectedAt=null; // timestamp de connexion pour priorité multi-connexion
 let leafMap=null,myMarker=null,myAccCircle=null,teamMarkers={};
 let mapLayers={chemins:null,eau:null,limite:null,subzone:null};
 let layerVisible={chemins:true,eau:true,limite:true};
@@ -1273,7 +1276,8 @@ function isInZone(lat,lng){
 
 async function init(){
   try{
-    const[td,ed]=await Promise.all([sbGet('teams?select=*&order=name'),sbGet('events?select=*&order=created_at.desc&limit=1')]);
+    myConnectedAt = new Date().toISOString();
+  const[td,ed]=await Promise.all([sbGet('teams?select=*&order=name'),sbGet('events?select=*&order=created_at.desc&limit=1')]);
     teams=Array.isArray(td)?td:[];
     event_=Array.isArray(ed)&&ed.length?ed[0]:null;
     if(event_&&event_.status==='active'){
@@ -1451,9 +1455,18 @@ function updateTeamMarkers(){
   });
 }
 
+function showGPSBanner(show){
+  const el=document.getElementById('gps-banner');
+  if(el) el.style.display=show?'block':'none';
+}
+
 function startGPS(){
   if(!navigator.geolocation||CU.type==='admin')return;
+  // Afficher la bannière tant que le GPS n'est pas reçu
+  showGPSBanner(true);
   gpsId=navigator.geolocation.watchPosition(async pos=>{
+    // GPS reçu : masquer la bannière
+    showGPSBanner(false);
     myLat=pos.coords.latitude;myLng=pos.coords.longitude;
     const icon=L.divIcon({className:'',html:`<div style="width:16px;height:16px;background:${CU.color};border:2px solid #0d1f0f;border-radius:50%;box-shadow:0 0 14px ${CU.color}cc"></div>`,iconSize:[16,16],iconAnchor:[8,8]});
     if(myMarker)leafMap.removeLayer(myMarker);
@@ -1463,8 +1476,11 @@ function startGPS(){
     const t=teams.find(t=>t.id===myId);if(t){t.lat=myLat;t.lng=myLng;}
     recordPosition(myId, myLat, myLng);
     updateTeamMarkers();
-    try{await sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({team_id:myId,latitude:myLat,longitude:myLng,accuracy:pos.coords.accuracy,updated_at:new Date().toISOString()}),headers:{...H,'Prefer':'resolution=merge-duplicates'}});}catch(e){}
-  },()=>{},{enableHighAccuracy:true,maximumAge:2000,timeout:10000});
+    try{await sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({team_id:myId,latitude:myLat,longitude:myLng,accuracy:pos.coords.accuracy,updated_at:new Date().toISOString(),connected_at:myConnectedAt}),headers:{...H,'Prefer':'resolution=merge-duplicates'}});}catch(e){}
+  },err=>{
+    // Erreur GPS : afficher la bannière
+    showGPSBanner(true);
+  },{enableHighAccuracy:true,maximumAge:2000,timeout:10000});
 }
 
 // ══ SCORE ENGINE ══════════════════════════════
@@ -1518,6 +1534,77 @@ function showScoreNotif(val,lbl){
 
 // ══ DISCOVERY FLOW ════════════════════════════
 // Chasseur: declare finding a team
+// ── AUTO-DÉCLARATION : équipe chassée se déclare trouvée ─────────
+let selfReportModal = false;
+function selfReportFound(){
+  if(selfReportModal) return;
+  selfReportModal = true;
+  // Créer un modal de confirmation simple
+  const overlay = document.createElement('div');
+  overlay.id = 'self-report-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--forest-mid);border:2px solid var(--red);border-radius:2px;padding:28px 24px;width:calc(100% - 40px);max-width:320px;text-align:center">
+      <div style="font-size:32px;margin-bottom:12px">🚨</div>
+      <div style="font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--red);margin-bottom:10px">Vous etes trouve ?</div>
+      <p style="font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:20px">Un chasseur vous a localise et a annonce votre nom a voix haute ?<br>Cette action est irreversible.</p>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeSelfReport()" style="flex:1;padding:12px;background:var(--forest);border:1px solid var(--border);border-radius:2px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);cursor:pointer">Annuler</button>
+        <button onclick="confirmSelfReport()" style="flex:1;padding:12px;background:var(--red);border:none;border-radius:2px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#fff;cursor:pointer">Confirmer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function closeSelfReport(){
+  selfReportModal = false;
+  const el = document.getElementById('self-report-overlay');
+  if(el) el.remove();
+}
+
+async function confirmSelfReport(){
+  closeSelfReport();
+  if(!game || !myId) return;
+  const myTeam = teams.find(t=>t.id===myId);
+  if(!myTeam || myTeam.status==='eliminated') return;
+  const r = game.current_round || 0;
+  try{
+    // Marquer l'équipe comme éliminée
+    await sbPatch('teams?id=eq.'+myId, {status:'eliminated'});
+    myTeam.status = 'eliminated';
+    // Arrêter le score engine et le zone check
+    if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
+    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    hideZB();
+    // Donner les points aux chasseurs
+    const pts = SCORE_HUNTER[r] || 0;
+    if(pts > 0){
+      const hunters = teams.filter(t=>t.role==='chasseur'&&t.status==='active');
+      for(const h of hunters){
+        const ns = (h.score||0)+pts;
+        await sbPatch('teams?id=eq.'+h.id, {score:ns});
+        await sbPost('scores',{team_id:h.id,game_id:game.id,points:pts,reason:'Decouverte '+myTeam.name+' (M'+r+')'});
+        h.score = ns;
+      }
+      // Vérifier chasse parfaite
+      const remaining = teams.filter(t=>t.role==='chasse'&&t.status==='active'&&t.id!==myId);
+      if(remaining.length===0){
+        for(const h of hunters){
+          const ns = (h.score||0)+SCORE_PERFECT_HUNT;
+          await sbPatch('teams?id=eq.'+h.id,{score:ns});
+          await sbPost('scores',{team_id:h.id,game_id:game.id,points:SCORE_PERFECT_HUNT,reason:'Chasse parfaite !'});
+          h.score=ns;
+        }
+        await sbPost('messages',{type:'announce',content:'🎯 Chasse parfaite ! Toutes les equipes ont ete trouvees. +'+SCORE_PERFECT_HUNT+' pts aux chasseurs !',game_id:game.id});
+      }
+    }
+    await sbPost('messages',{type:'capture',content:'🚨 '+myTeam.name+' s\'est fait trouver ! (Manche '+r+')',game_id:game.id});
+    toast('X','Elimine','Votre equipe est eliminee !');
+    if(navigator.vibrate)navigator.vibrate([300,100,300]);
+    buildTeams();
+  }catch(e){toast('X','Erreur',''+e.message);}
+}
+
 async function declareFound(preyTeamId){
   if(!game||game.status!=='active')return;
   const r=game.current_round||0;
@@ -1720,15 +1807,7 @@ function startTimer(){
     // ── Déclenchement du picker (une seule fois) ──
     if(pr > 0 && !szPickerTriggered[pr]){
       szPickerTriggered[pr] = true;
-      // Message radio (admin uniquement pour éviter doublons)
-      if(CU.type==='admin'){
-        await sbPost('messages',{
-          type:'announce',
-          content:'⚔️ Les chasseurs ont 3 minutes pour choisir une sous-zone a supprimer !',
-          game_id:game.id
-        });
-      }
-      // Écran picker pour les chasseurs
+      // Écran picker pour les chasseurs (pas de message radio inutile)
       if(CU.type==='team'){
         const myTeam = teams.find(t=>t.id===myId);
         if(myTeam && myTeam.role==='chasseur') openSZPicker();
@@ -1801,6 +1880,29 @@ function showRoundOverlay(r){
   let c=5;const cd=document.getElementById('ro-countdown');cd.textContent=c;
   const ti=setInterval(()=>{c--;cd.textContent=c;if(c<=0){clearInterval(ti);ov.style.display='none';}},1000);
   if(navigator.vibrate)navigator.vibrate([200,100,200,100,200]);
+  // M4 : révéler toutes les positions pendant 15 secondes
+  if(r===4 && leafMap) showAllPositions15s();
+}
+
+function showAllPositions15s(){
+  const tempMarkers=[];
+  // Créer des marqueurs temporaires pour toutes les équipes actives
+  teams.forEach(t=>{
+    if(!t.lat||!t.lng||t.id===myId) return;
+    const icon=L.divIcon({
+      className:'',
+      html:`<div style="width:20px;height:20px;background:${t.color};border:3px solid #fff;border-radius:50%;box-shadow:0 0 20px ${t.color};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;color:#000">${t.name.substring(0,1)}</div>`,
+      iconSize:[20,20],iconAnchor:[10,10]
+    });
+    const m=L.marker([t.lat,t.lng],{icon}).addTo(leafMap);
+    m.bindTooltip(t.name,{permanent:true,className:'zone-tooltip'}).openTooltip();
+    tempMarkers.push(m);
+  });
+  toast('📍','Revelation','Positions revelees pendant 15 secondes !');
+  // Supprimer les marqueurs après 15s
+  setTimeout(()=>{
+    tempMarkers.forEach(m=>leafMap.removeLayer(m));
+  },15000);
 }
 
 function updatePhase(){
@@ -1834,7 +1936,21 @@ function startPolling(){
   setInterval(async()=>{
     try{
       const pos=await sbGet('positions?select=*');
-      if(Array.isArray(pos)){pos.forEach(p=>{const t=teams.find(t=>t.id===p.team_id);if(t&&t.id!==myId){t.lat=p.latitude;t.lng=p.longitude;recordPosition(p.team_id,p.latitude,p.longitude);}});updateTeamMarkers();}
+      if(Array.isArray(pos)){
+        pos.forEach(p=>{
+          const t=teams.find(t=>t.id===p.team_id);
+          if(t&&t.id!==myId){
+            // Multi-connexion : on utilise la position du membre connecté en PREMIER
+            // (connected_at le plus ancien = prioritaire)
+            if(!t._connectedAt || !p.connected_at || p.connected_at <= t._connectedAt){
+              t.lat=p.latitude;t.lng=p.longitude;
+              t._connectedAt=p.connected_at;
+              recordPosition(p.team_id,p.latitude,p.longitude);
+            }
+          }
+        });
+        updateTeamMarkers();
+      }
       const ft=await sbGet('teams?select=*&order=name');
       if(Array.isArray(ft)){ft.forEach(ft=>{const t=teams.find(t=>t.id===ft.id);if(t){t.status=ft.status;t.role=ft.role;t.score=ft.score;t.badges=ft.badges;}});buildTeams();updateCount();}
       if(event_){
@@ -1881,16 +1997,52 @@ function startPolling(){
 
 // ══ UI DATA ════════════════════════════════════
 async function refreshScores(){
-  const sorted=[...teams].sort((a,b)=>(b.score||0)-(a.score||0)),max=sorted[0]?.score||1;
+  const gameActive = game && game.status==='active';
+  const sorted=[...teams].sort((a,b)=>(b.score||0)-(a.score||0));
+  const max=sorted.reduce((m,t)=>Math.max(m,t.score||0),1);
   document.getElementById('score-sub').textContent=game?'Partie '+game.game_number+' - Manche '+game.current_round:'En attente';
-  document.getElementById('score-list').innerHTML=sorted.map((t,i)=>`<div class="srow"><div class="srank ${i===0?'gold':''}">${i===0?'#1':i+1}</div><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><div style="width:8px;height:8px;border-radius:50%;background:${t.color};flex-shrink:0"></div><span class="sname" style="color:${t.status==='eliminated'?'var(--text-dim)':t.color}">${t.name}</span>${t.status==='eliminated'?'<span class="tstatus st-e">Eliminee</span>':''}</div><div class="sbar"><div class="sbarfill" style="width:${max>0?Math.round((t.score||0)/max*100):0}%;background:linear-gradient(90deg,${t.color}66,${t.color})"></div></div></div><div class="spts">${t.score||0}</div></div>`).join('');
+  document.getElementById('score-list').innerHTML=sorted.map((t,i)=>{
+    // Afficher le score seulement si : pas de partie active OU équipe éliminée
+    const showScore = !gameActive || t.status==='eliminated';
+    const scoreDisplay = showScore ? (t.score||0) : '—';
+    const barWidth = showScore && max>0 ? Math.round((t.score||0)/max*100) : 0;
+    return `<div class="srow">
+      <div class="srank ${i===0&&showScore?'gold':''}">${i===0&&showScore?'#1':i+1}</div>
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="width:8px;height:8px;border-radius:50%;background:${t.color};flex-shrink:0"></div>
+          <span class="sname" style="color:${t.status==='eliminated'?'var(--text-dim)':t.color}">${t.name}</span>
+          ${t.status==='eliminated'?'<span class="tstatus st-e">Eliminee</span>':''}
+          ${t.role==='chasseur'&&gameActive?'<span class="tstatus" style="color:var(--amber);border-color:rgba(255,184,48,.3)">Chasseur</span>':''}
+        </div>
+        <div class="sbar"><div class="sbarfill" style="width:${barWidth}%;background:linear-gradient(90deg,${t.color}66,${t.color})"></div></div>
+      </div>
+      <div class="spts">${scoreDisplay}</div>
+    </div>`;
+  }).join('');
 }
 function buildTeams(){
-  // For chasseurs: show button to declare finding a team
-  const isChaseur=CU.type==='team'&&CU.role==='chasseur'&&game&&game.status==='active'&&(game.current_round||0)>=2;
+  const gameActive = game && game.status==='active';
+  const r = game?.current_round||0;
+  // Chasseur peut déclarer une trouvaille à partir de M2
+  const isChaseur = CU.type==='team' && CU.role==='chasseur' && gameActive && r>=2;
+  // Chassé peut se déclarer trouvé si encore actif et partie active
+  const myTeamObj = teams.find(t=>t.id===myId);
+  const isChasse = CU.type==='team' && myTeamObj?.role==='chasse' && myTeamObj?.status==='active' && gameActive && r>=2;
+
   document.getElementById('team-list').innerHTML=teams.map(t=>{
-    const canFind=isChaseur&&t.role==='chasse'&&t.status==='active'&&t.id!==myId;
-    return`<div class="trow"><div class="tind" style="background:${t.color};box-shadow:0 0 7px ${t.color}55"></div><div class="tinfo"><div class="trname" style="color:${t.status==='eliminated'?'var(--text-dim)':'var(--text)'}">${t.name}</div><div class="trmembers">${(t.members||[]).join(', ')} . ${t.role==='chasseur'?'Chasseur':'Chasse'}</div></div>${canFind?`<button onclick="declareFound('${t.id}')" style="background:rgba(255,184,48,.15);border:1px solid rgba(255,184,48,.4);border-radius:2px;padding:5px 10px;font-family:monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--amber);cursor:pointer">Trouve!</button>`:`<span class="tstatus ${t.status==='active'?'st-a':t.status==='eliminated'?'st-e':'st-h'}">${t.status==='active'?'Actif':t.status==='eliminated'?'Elimine':'Cache'}</span>`}</div>`;
+    const canFind = isChaseur && t.role==='chasse' && t.status==='active' && t.id!==myId;
+    // Bouton auto-déclaration pour l'équipe chassée elle-même
+    const canSelfReport = isChasse && t.id===myId;
+    let actionBtn = '';
+    if(canFind){
+      actionBtn = `<button onclick="declareFound('${t.id}')" style="background:rgba(255,184,48,.15);border:1px solid rgba(255,184,48,.4);border-radius:2px;padding:5px 10px;font-family:monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--amber);cursor:pointer">Trouve!</button>`;
+    } else if(canSelfReport){
+      actionBtn = `<button onclick="selfReportFound()" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:2px;padding:5px 10px;font-family:monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--red);cursor:pointer">Je suis trouve !</button>`;
+    } else {
+      actionBtn = `<span class="tstatus ${t.status==='active'?'st-a':t.status==='eliminated'?'st-e':'st-h'}">${t.status==='active'?'Actif':t.status==='eliminated'?'Elimine':'Cache'}</span>`;
+    }
+    return`<div class="trow"><div class="tind" style="background:${t.color};box-shadow:0 0 7px ${t.color}55"></div><div class="tinfo"><div class="trname" style="color:${t.status==='eliminated'?'var(--text-dim)':'var(--text)'}">${t.name}</div><div class="trmembers">${(t.members||[]).join(', ')} · ${t.role==='chasseur'?'Chasseur':'Chasse'}</div></div>${actionBtn}</div>`;
   }).join('');
   refreshScores();
 }
@@ -1900,11 +2052,11 @@ function buildBadges(){
 
 // ── BADGE DEFINITIONS ─────────────────────────
 const BADGE_DEFS = [
-  {id:'fantomes',    icon:'🥷', name:'Fantomes',      pts:700, desc:'Equipe chasse jamais trouvee',         multi:true,  timing:'party'},
-  {id:'eclair',      icon:'⚡', name:'Traque Eclair', pts:650, desc:'Decouverte la plus rapide (M2)',       multi:false, timing:'event'},
-  {id:'nomades',     icon:'🗺️', name:'Nomades',       pts:600, desc:'Plus grande distance GPS parcourue',  multi:false, timing:'event'},
-  {id:'discretion',  icon:'🕵️', name:'Discretion',   pts:650, desc:'Meilleur ratio cache / distance',     multi:false, timing:'event'},
-  {id:'complete',    icon:'🏆', name:'Complete',       pts:600, desc:'Meilleure performance globale',       multi:false, timing:'event'},
+  {id:'complete',    icon:'🏆', name:'Equipe la plus complete', pts:800, desc:'Meilleure performance globale (mediane pts/partie)', multi:false, timing:'event'},
+  {id:'eclair',      icon:'⚡', name:'Traque eclair',           pts:750, desc:'Temps de decouverte le plus rapide',                multi:false, timing:'event'},
+  {id:'fantomes',    icon:'🥷', name:'Fantomes',                pts:650, desc:'Equipe chassee jamais trouvee sur une partie',      multi:true,  timing:'party'},
+  {id:'discretion',  icon:'🕵️', name:'Maitre de la discretion', pts:650, desc:'Temps moyen le plus eleve avant d\'etre trouve',   multi:false, timing:'event'},
+  {id:'nomades',     icon:'🗺️', name:'Nomades',                 pts:750, desc:'Plus grande distance GPS parcourue sur l\'evenement', multi:false, timing:'event'},
 ];
 
 function renderBadgeDrawer(){
@@ -1929,6 +2081,34 @@ function showBadgeDetail(badgeId){
   if(!b) return;
   const allBadges = teams.flatMap(t => (t.badges||[]).map(bid => ({teamId:t.id, teamName:t.name, teamColor:t.color, badgeId:bid})));
   const earners = allBadges.filter(e => e.badgeId === b.id);
+
+  // Badge Nomades : modal avec tableau des distances
+  if(badgeId === 'nomades'){
+    const sorted = [...teams].sort((a,b)=>(b.total_distance||0)-(a.total_distance||0));
+    const rows = sorted.map((t,i)=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
+        <span style="font-family:monospace;font-size:11px;color:var(--text-dim);width:20px">${i+1}</span>
+        <div style="width:8px;height:8px;border-radius:50%;background:${t.color};flex-shrink:0"></div>
+        <span style="flex:1;font-size:13px;font-weight:700;text-transform:uppercase">${t.name}</span>
+        <span style="font-family:monospace;font-size:12px;color:var(--acid)">${Math.round((t.total_distance||0))}m</span>
+      </div>`).join('');
+    const overlay=document.createElement('div');
+    overlay.style.cssText='position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
+    overlay.innerHTML=`
+      <div style="background:var(--forest-mid);border:1px solid var(--border);border-radius:2px;padding:24px;width:calc(100% - 32px);max-width:360px;max-height:80vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <span style="font-size:15px;font-weight:900;letter-spacing:2px;text-transform:uppercase">🗺️ Nomades — Distances</span>
+          <button onclick="this.closest('div').parentElement.remove()" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer">✕</button>
+        </div>
+        <p style="font-family:monospace;font-size:10px;color:var(--text-dim);letter-spacing:1px;margin-bottom:12px">DISTANCE TOTALE PARCOURUE (GPS)</p>
+        ${rows}
+        ${earners.length>0?'<p style="margin-top:14px;font-size:12px;color:var(--acid)">Gagne par : '+earners.map(e=>'<span style="color:'+e.teamColor+'">'+e.teamName+'</span>').join(', ')+'</p>':'<p style="margin-top:14px;font-size:12px;color:var(--text-dim)">Pas encore attribue</p>'}
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove(); });
+    return;
+  }
+
   toast(b.icon, b.name, earners.length>0 ? 'Gagne par : '+earners.map(e=>e.teamName).join(', ') : 'Pas encore attribue');
 }
 
@@ -1949,14 +2129,31 @@ function startBadgeTracking(){
   // Called from GPS watch + polling
 }
 
+let distanceWriteTimer = null;
 function recordPosition(teamId, lat, lng){
   if(!game || game.status !== 'active') return;
   const last = badgeStats.lastPositions[teamId];
   if(last){
     const dist = haversine(last.lat, last.lng, lat, lng);
-    badgeStats.teamDistances[teamId] = (badgeStats.teamDistances[teamId]||0) + dist;
+    // Filtrer les sauts aberrants (>100m en une mesure = erreur GPS)
+    if(dist < 100){
+      badgeStats.teamDistances[teamId] = (badgeStats.teamDistances[teamId]||0) + dist;
+    }
   }
   badgeStats.lastPositions[teamId] = {lat, lng};
+  // Écrire le total dans Supabase toutes les 30s (seulement pour notre propre équipe)
+  if(teamId === myId) schedulDistanceWrite();
+}
+
+function schedulDistanceWrite(){
+  if(distanceWriteTimer) return; // déjà planifié
+  distanceWriteTimer = setTimeout(async()=>{
+    distanceWriteTimer = null;
+    const dist = badgeStats.teamDistances[myId]||0;
+    if(dist > 0){
+      try{ await sbPatch('teams?id=eq.'+myId,{total_distance:dist}); }catch(e){}
+    }
+  }, 30000);
 }
 
 function haversine(lat1, lng1, lat2, lng2){
@@ -2491,6 +2688,7 @@ async function confirmSZPick(){
     const remainingNames = remaining.map(z => ZONE_POLYS.find(p=>p.id===z)?.name||z).join(' et ');
     const eliminatedName = ZONE_POLYS.find(p=>p.id===eliminated)?.name||eliminated;
 
+    // Annoncer la SZ supprimée (la manche avancera automatiquement quand gs atteint la deadline)
     await sbPost('messages',{
       type:'announce',
       content:'📍 Sous-zone supprimee : '+eliminatedName+'. Sous-zones actives : '+remainingNames,
@@ -2498,10 +2696,8 @@ async function confirmSZPick(){
     });
     toast('📍','Sous-zones',remainingNames+' actives !');
     updateZoneColors();
-
-    // Passer immédiatement à la manche suivante
-    if(nextR <= 4) await advanceRound(nextR);
-    else await adminStopGame();
+    // NE PAS appeler advanceRound ici — le chrono global gère l'avancement
+    // quand gs atteint SZ_PICKER_GS_DEADLINE (20:00 ou 10:00)
 
   }catch(e){ toast('X','Erreur',''+e.message); }
 }
@@ -2547,6 +2743,8 @@ async function applyTimeoutPenalty(){
     });
     buildTeams();
     toast('⏰','Timeout','-100 pts. Sous-zone supprimee aleatoirement.');
+    updateZoneColors();
+    // La manche avancera automatiquement via le chrono global
   }catch(e){ toast('X','Erreur',''+e.message); }
 }
 
