@@ -1130,6 +1130,13 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <button class="abtn" onclick="adminToggleCount()"><span id="tc-lbl">Masquer nb equipes</span></button>
     </div>
 
+    <div class="asec" id="admin-sz-edit-sec" style="display:none">
+      <div class="asectitle">Modifier sous-zones actives</div>
+      <div id="admin-sz-edit-info" style="font-family:monospace;font-size:10px;color:var(--text-dim);letter-spacing:1px;margin-bottom:10px">Choisissez les sous-zones a activer</div>
+      <div id="admin-sz-edit-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px"></div>
+      <button class="abtn ok" onclick="adminApplySZEdit()"><span class="ai">✅</span> Appliquer</button>
+    </div>
+
     <div class="asec">
       <div class="asectitle">Fin d evenement</div>
       <button class="abtn ok" onclick="adminEndEvent()"><span class="ai">🏆</span> Distribuer points badges</button>
@@ -2905,6 +2912,99 @@ async function adminStopGame(){
   }catch(e){toast('X','Erreur',''+e.message);}
 }
 
+
+// ══ ADMIN — MODIFICATION SOUS-ZONES ════════════════════════════
+let adminSZSelection = []; // sous-zones cochées par l'admin
+
+function buildAdminSZEdit(){
+  const sec = document.getElementById('admin-sz-edit-sec');
+  if(!sec) return;
+  // Afficher seulement si une partie est active
+  if(!game || game.status !== 'active' || !game.active_zone){
+    sec.style.display = 'none';
+    return;
+  }
+  sec.style.display = 'block';
+
+  // Les 3 sous-zones initiales = celles de la zone choisie (depuis launchConfig ou reconstruites)
+  const zoneName = game.active_zone;
+  const zoneData = ZONES_DATA[zoneName];
+  if(!zoneData){ sec.style.display='none'; return; }
+  const allSZ = zoneData.subzones; // toutes les SZ de la zone (pas seulement les actives)
+
+  // Les sous-zones actuellement actives
+  const currentActive = (game.active_subzone||'').split(',').filter(Boolean);
+  adminSZSelection = [...currentActive];
+
+  // Info
+  const info = document.getElementById('admin-sz-edit-info');
+  if(info) info.textContent = 'Zone : '+zoneName+' — Actives : '+currentActive.join(', ');
+
+  // Grille avec les 3 SZ initiales choisies au lancement
+  // On récupère les 3 SZ initiales depuis active_subzone étendu ou on les déduit
+  // Pour l'instant on affiche TOUTES les SZ de la zone pour permettre le choix
+  const grid = document.getElementById('admin-sz-edit-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  allSZ.forEach(szId => {
+    const btn = document.createElement('div');
+    btn.style.cssText = 'padding:9px 4px;text-align:center;font-family:monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;border-radius:2px;border:1px solid var(--border);color:var(--text-dim);background:var(--forest);transition:all .15s';
+    btn.textContent = szId;
+    btn.id = 'adminsz-'+szId;
+    if(currentActive.includes(szId)){
+      btn.style.borderColor = 'var(--amber)';
+      btn.style.color = 'var(--amber)';
+      btn.style.background = 'rgba(255,184,48,.08)';
+    }
+    btn.addEventListener('click', () => {
+      const idx = adminSZSelection.indexOf(szId);
+      if(idx >= 0){
+        adminSZSelection.splice(idx, 1);
+        btn.style.borderColor = 'var(--border)';
+        btn.style.color = 'var(--text-dim)';
+        btn.style.background = 'var(--forest)';
+      } else {
+        adminSZSelection.push(szId);
+        btn.style.borderColor = 'var(--amber)';
+        btn.style.color = 'var(--amber)';
+        btn.style.background = 'rgba(255,184,48,.08)';
+      }
+    });
+    grid.appendChild(btn);
+  });
+}
+
+async function adminApplySZEdit(){
+  if(!game || !game.active_zone){ toast('!','Admin','Aucune partie active'); return; }
+  if(adminSZSelection.length === 0){ toast('!','Admin','Selectionnez au moins une sous-zone'); return; }
+
+  const gs = getGlobalSecs();
+  const inPickerZone = gs <= SZ_PICKER_GS_TRIGGER[game.current_round||0] && gs > SZ_PICKER_GS_DEADLINE[game.current_round||0];
+  const newSZ = adminSZSelection.join(',');
+  const newNames = adminSZSelection.map(z => ZONE_POLYS.find(p=>p.id===z)?.name||z).join(', ');
+
+  try{
+    await sbPatch('games?id=eq.'+game.id, {active_subzone: newSZ});
+    game.active_subzone = newSZ;
+
+    let msgContent = '🔧 Admin — Sous-zones modifiees : '+newNames;
+    if(inPickerZone){
+      // Entre 23:00 et 20:00 ou 13:00 et 10:00 : préciser que c'est l'admin qui a choisi
+      const oldSZ = (game.active_subzone||'').split(',').filter(Boolean);
+      msgContent = '🔧 Admin — Choix sous-zones modifie. Sous-zones actives : '+newNames;
+      // Fermer le picker si ouvert
+      if(szPickerOpen) closeSZPicker();
+    }
+
+    await sbPost('messages',{type:'announce', content:msgContent, game_id:game.id});
+    toast('✅','Sous-zones','Modifiees : '+newNames);
+    updateZoneColors();
+    showActiveSubzones();
+    buildAdminSZEdit();
+    closeDrawer('admin');
+  }catch(e){ toast('X','Erreur',''+e.message); }
+}
+
 async function adminEndEvent(){
   await awardBadgesEndOfEvent();
   toast('🏆','Evenement','Points de badges distribues !');
@@ -3005,12 +3105,12 @@ function adminToggleCount(){showCount=!showCount;document.getElementById('tc-lbl
 
 function openDrawer(id){
   document.getElementById('d-'+id).classList.add('on');
-  // Réinitialiser le compteur radio quand on l'ouvre
   if(id==='chat'){
     unreadCount=0;
     updateRadioBadge();
     if(lastSeenMsgId===null) refreshChat();
   }
+  if(id==='admin') buildAdminSZEdit();
 }
 function closeDrawer(id){document.getElementById('d-'+id).classList.remove('on');}
 function navClick(btn,id){document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');if(id)openDrawer(id);}
