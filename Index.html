@@ -951,8 +951,8 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
   <!-- Modal validation découverte (pour les chassés) -->
   <div id="found-modal">
     <div class="found-box" style="position:relative">
-      <button class="xbtn" onclick="denyFound()" style="color:var(--text-dim)">&#x2715;</button>
       <span class="found-title">Un chasseur vous a trouves !</span>
+      <button class="xbtn" onclick="denyFound()" style="color:var(--text-dim)">&#x2715;</button>
       <span class="found-name" id="found-hunter-name">RENARD-FEU</span>
       <span class="found-desc">Confirmez si un chasseur a bien annonce votre prenom et votre equipe a voix haute.</span>
       <div class="found-btns">
@@ -996,8 +996,8 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 <!-- Sub-modal for team management -->
 <div id="sub-modal">
   <div class="sub-box" style="position:relative">
-    <button class="xbtn" onclick="closeSubModal()">&#x2715;</button>
     <span class="sub-title" id="sub-title">Creer une equipe</span>
+    <button class="xbtn" onclick="closeSubModal()">&#x2715;</button>
 
     <div id="sub-create">
       <div class="field"><label>Nom equipe</label><input id="new-team-name" type="text" placeholder="ex: AIGLE-NOIR" autocapitalize="characters"></div>
@@ -1028,8 +1028,8 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 <!-- ── SUBZONE PICKER MODAL (chasseurs) ── -->
 <div id="sz-picker-modal">
   <div class="szp-box" style="position:relative">
-    <button class="xbtn" onclick="closeSZPicker()" style="color:var(--text-dim)">&#x2715;</button>
     <span class="szp-title">⚔️ Choisissez une sous-zone a supprimer</span>
+    <button class="xbtn" onclick="closeSZPicker()" style="color:var(--text-dim)">&#x2715;</button>
     <span class="szp-timer" id="szp-timer">3:00</span>
     <p class="szp-sub">Choisissez la sous-zone que les chassés n'auront PAS besoin de rejoindre.<br>Les 2 restantes seront actives.</p>
     <div class="szp-zone-list" id="szp-zone-list"></div>
@@ -1041,8 +1041,8 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 <!-- ── LAUNCH MODAL ── -->
 <div id="launch-modal">
   <div class="lm-box" style="position:relative">
-    <button class="xbtn" onclick="closeLaunchModal()">&#x2715;</button>
     <span class="lm-title">🎮 Lancer une partie</span>
+    <button class="xbtn" onclick="closeLaunchModal()">&#x2715;</button>
     <span class="lm-sub">Configurez avant de demarrer</span>
 
     <div class="lm-section">
@@ -1069,9 +1069,9 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 
 <div class="drawer" id="d-scores">
   <div class="doverlay" onclick="closeDrawer('scores')"></div>
-  <div class="dpanel" style="position:relative">
-    <button class="xbtn" onclick="closeDrawer('scores')">&#x2715;</button>
+  <div class="dpanel">
     <div class="dhandle"></div>
+    <button class="xbtn" onclick="closeDrawer('scores')">&#x2715;</button>
     <div class="dtitle">Classement</div>
     <div class="dsub" id="score-sub">En attente</div>
     <div id="score-list"></div>
@@ -1081,18 +1081,18 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 </div>
 <div class="drawer" id="d-teams">
   <div class="doverlay" onclick="closeDrawer('teams')"></div>
-  <div class="dpanel" style="position:relative">
-    <button class="xbtn" onclick="closeDrawer('teams')">&#x2715;</button>
+  <div class="dpanel">
     <div class="dhandle"></div>
+    <button class="xbtn" onclick="closeDrawer('teams')">&#x2715;</button>
     <div class="dtitle">Equipes</div>
     <div id="team-list"></div>
   </div>
 </div>
 <div class="drawer" id="d-chat">
   <div class="doverlay" onclick="closeDrawer('chat')"></div>
-  <div class="dpanel" style="position:relative">
-    <button class="xbtn" onclick="closeDrawer('chat')">&#x2715;</button>
+  <div class="dpanel">
     <div class="dhandle"></div>
+    <button class="xbtn" onclick="closeDrawer('chat')">&#x2715;</button>
     <div class="dtitle">Radio Tactique</div>
     <div class="dsub">Lecture seule</div>
     <div id="chat-list"></div>
@@ -1168,9 +1168,9 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
 
 <!-- Modal confirmation reset -->
 <div id="reset-modal" style="display:none;position:fixed;inset:0;z-index:970;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)">
-  <div style="background:var(--forest-mid);border:2px solid var(--red);border-radius:2px;padding:28px 24px;width:calc(100% - 40px);max-width:340px;text-align:center">
-    <button class="xbtn" onclick="closeResetModal()">&#x2715;</button>
+  <div style="background:var(--forest-mid);border:2px solid var(--red);border-radius:2px;padding:28px 24px;width:calc(100% - 40px);max-width:340px;text-align:center;position:relative">
     <div style="font-size:36px;margin-bottom:12px">⚠️</div>
+    <button class="xbtn" onclick="closeResetModal()">&#x2715;</button>
     <div style="font-size:15px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:var(--red);margin-bottom:10px">Reset evenement</div>
     <p style="font-size:13px;color:var(--text-dim);line-height:1.6;margin-bottom:16px">Scores, eliminations, badges et messages seront reinitialises. La partie en cours sera arretee.</p>
     <p style="font-family:monospace;font-size:11px;color:var(--amber);margin-bottom:10px">Tapez RESET pour confirmer</p>
