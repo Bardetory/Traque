@@ -1231,7 +1231,6 @@ const ROUND_DESC=[
 ];
 const MALUS_SEQ=[1,2,5,10,15,20,30,40,60,80,100];
 const GRACE=10;
-const BDEFS=[{i:'W',n:'Fantomes'},{i:'Z',n:'Traque Eclair'},{i:'M',n:'Nomades'},{i:'G',n:'Discretion'},{i:'T',n:'Complete'},{i:'S',n:'Maitres'}];
 
 let CU=null,teams=[],game=null,event_=null,gpsId=null,timerInt=null,zoneInt=null,scoreInt=null;
 let szPickerTimer=null;
@@ -1241,7 +1240,6 @@ let extraSeconds=0;        // minutes bonus ajoutées (lues depuis Supabase)
 let szPickerTriggered={2:false,3:false}; // évite de déclencher le picker 2x
 let showCount=true,myId=null;
 let outSecs=0,malusIdx=0,wasOut=false,myLat=null,myLng=null;
-let myConnectedAt=null; // timestamp de connexion pour priorité multi-connexion
 let leafMap=null,myMarker=null,myAccCircle=null,teamMarkers={};
 let mapLayers={chemins:null,eau:null,limite:null,subzone:null};
 let layerVisible={chemins:true,eau:true,limite:false};
@@ -1275,7 +1273,6 @@ function isInZone(lat,lng){
 
 async function init(){
   try{
-    myConnectedAt = new Date().toISOString();
   const[td,ed]=await Promise.all([sbGet('teams?select=*&order=name'),sbGet('events?select=*&order=created_at.desc&limit=1')]);
     teams=Array.isArray(td)?td:[];
     event_=Array.isArray(ed)&&ed.length?ed[0]:null;
@@ -1485,6 +1482,8 @@ function showGPSBanner(show, msg){
   if(msg) el.textContent='📡 '+msg;
 }
 
+let lastPositionSent = 0; // timestamp du dernier envoi Supabase
+
 function startGPS(){
   if(CU.type==='admin') return;
   if(!navigator.geolocation){
@@ -1492,9 +1491,10 @@ function startGPS(){
     return;
   }
   showGPSBanner(true,'Recherche de votre position...');
-  gpsId=navigator.geolocation.watchPosition(async pos=>{
+  gpsId=navigator.geolocation.watchPosition(pos=>{
     showGPSBanner(false);
     myLat=pos.coords.latitude;myLng=pos.coords.longitude;
+    // Mise à jour visuelle immédiate (zéro requête réseau)
     const iconHtml='<div style="width:16px;height:16px;background:'+CU.color+';border:2px solid #0d1f0f;border-radius:50%;box-shadow:0 0 14px '+CU.color+'cc"></div>';
     const icon=L.divIcon({className:'',html:iconHtml,iconSize:[16,16],iconAnchor:[8,8]});
     if(myMarker)leafMap.removeLayer(myMarker);
@@ -1503,8 +1503,12 @@ function startGPS(){
     if(pos.coords.accuracy<80)myAccCircle=L.circle([myLat,myLng],{radius:pos.coords.accuracy,color:'rgba(127,255,79,0.4)',fillColor:'rgba(127,255,79,0.05)',fillOpacity:1,weight:1}).addTo(leafMap);
     const t=teams.find(t=>t.id===myId);if(t){t.lat=myLat;t.lng=myLng;}
     recordPosition(myId, myLat, myLng);
-    updateTeamMarkers();
-    try{await sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({team_id:myId,latitude:myLat,longitude:myLng,accuracy:pos.coords.accuracy,updated_at:new Date().toISOString()}),headers:{...H,'Prefer':'resolution=merge-duplicates'}});}catch(e){}
+    // Envoi Supabase : toutes les 15 secondes max
+    const now = Date.now();
+    if(now - lastPositionSent >= 15000){
+      lastPositionSent = now;
+      sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({team_id:myId,latitude:myLat,longitude:myLng,accuracy:pos.coords.accuracy,updated_at:new Date().toISOString()}),headers:{...H,'Prefer':'resolution=merge-duplicates'}}).catch(()=>{});
+    }
   },err=>{
     const msgs={1:'Permission GPS refusee — autorisez dans votre navigateur',2:'Position indisponible',3:'Timeout GPS — reessai...'};
     showGPSBanner(true, msgs[err.code]||'GPS indisponible');
@@ -1522,7 +1526,7 @@ function startScoreEngine(){
     const myTeam=teams.find(t=>t.id===myId);
     if(!myTeam||myTeam.status==='eliminated')return;
 
-    // Chassés: +50 pts par minute complète non trouvé
+    // Chassés: +30 pts par minute complète non trouvée (SCORE_CHASSE_PER_MIN)
     if(myTeam.role==='chasse'){
       if(!game.started_at) return;
       // Calcul basé sur le chrono global : minutes écoulées depuis le début de la partie
@@ -1608,27 +1612,34 @@ async function confirmSelfReport(){
     hideZB();
     // Donner les points aux chasseurs
     const pts = SCORE_HUNTER[r] || 0;
+    let pointsOk = true;
     if(pts > 0){
       const hunters = teams.filter(t=>t.role==='chasseur'&&t.status==='active');
-      for(const h of hunters){
-        const ns = (h.score||0)+pts;
-        await sbPatch('teams?id=eq.'+h.id, {score:ns});
-        await sbPost('scores',{team_id:h.id,game_id:game.id,points:pts,reason:'Decouverte '+myTeam.name+' (M'+r+')'});
-        h.score = ns;
-      }
-      // Vérifier chasse parfaite
-      const remaining = teams.filter(t=>t.role==='chasse'&&t.status==='active'&&t.id!==myId);
-      if(remaining.length===0){
+      try{
         for(const h of hunters){
-          const ns = (h.score||0)+SCORE_PERFECT_HUNT;
-          await sbPatch('teams?id=eq.'+h.id,{score:ns});
-          await sbPost('scores',{team_id:h.id,game_id:game.id,points:SCORE_PERFECT_HUNT,reason:'Chasse parfaite !'});
-          h.score=ns;
+          const ns = (h.score||0)+pts;
+          await sbPatch('teams?id=eq.'+h.id, {score:ns});
+          await sbPost('scores',{team_id:h.id,game_id:game.id,points:pts,reason:'Decouverte '+myTeam.name+' (M'+r+')'});
+          h.score = ns;
         }
-        await sbPost('messages',{type:'announce',content:'🎯 Chasse parfaite ! Toutes les equipes ont ete trouvees. +'+SCORE_PERFECT_HUNT+' pts aux chasseurs !',game_id:game.id});
+        // Vérifier chasse parfaite
+        const remaining = teams.filter(t=>t.role==='chasse'&&t.status==='active'&&t.id!==myId);
+        if(remaining.length===0){
+          for(const h of hunters){
+            const ns = (h.score||0)+SCORE_PERFECT_HUNT;
+            await sbPatch('teams?id=eq.'+h.id,{score:ns});
+            await sbPost('scores',{team_id:h.id,game_id:game.id,points:SCORE_PERFECT_HUNT,reason:'Chasse parfaite !'});
+            h.score=ns;
+          }
+          await sbPost('messages',{type:'announce',content:'🎯 Chasse parfaite ! Toutes les equipes ont ete trouvees. +'+SCORE_PERFECT_HUNT+' pts aux chasseurs !',game_id:game.id});
+        }
+      }catch(e){
+        pointsOk = false;
+        // Informer tout le monde que l'attribution a échoué pour correction manuelle
+        await sbPost('messages',{type:'alert',content:'⚠️ Erreur attribution points apres decouverte de '+myTeam.name+' — signalez-le a l\'admin pour correction manuelle.',game_id:game.id}).catch(()=>{});
       }
     }
-    await sbPost('messages',{type:'capture',content:'🚨 '+myTeam.name+' s\'est fait trouver ! (Manche '+r+')',game_id:game.id});
+    await sbPost('messages',{type:'capture',content:'🚨 '+myTeam.name+' s\'est fait trouver ! (Manche '+r+')'+(pointsOk?'':' — verifier les points chasseurs'),game_id:game.id});
     toast('X','Elimine','Votre equipe est eliminee !');
     if(navigator.vibrate)navigator.vibrate([300,100,300]);
     buildTeams();
@@ -1829,11 +1840,12 @@ function startTimer(){
     const pr  = getPickerRound(gs);
     const prevR = game.current_round || 0;
 
-    // ── Avancement automatique de manche (admin seulement pour écrire Supabase) ──
-    if(r > 0 && r !== prevR && r > prevR && CU.type==='admin'){
+    // ── Avancement automatique de manche (n'importe quel client, guard dans advanceRound) ──
+    if(r > 0 && r !== prevR && r > prevR){
       await advanceRound(r);
-    } else if(r === 0 && prevR > 0 && CU.type==='admin'){
-      await adminStopGame();
+    } else if(r === 0 && prevR > 0){
+      if(CU.type==='admin') await adminStopGame();
+      else await autoStopGame();
       return;
     }
 
@@ -1884,11 +1896,19 @@ function renderTimer(gs){
 async function advanceRound(newR){
   if(!game || game._adv) return; game._adv=true;
   try{
+    // Guard anti-doublon : vérifier que la manche n'a pas déjà été avancée
+    const gd = await sbGet('games?id=eq.'+game.id+'&select=current_round,status');
+    if(!Array.isArray(gd)||!gd.length||gd[0].status!=='active'||gd[0].current_round>=newR){
+      game._adv=false; return;
+    }
     await sbPatch('games?id=eq.'+game.id, {current_round: newR});
     game.current_round = newR; game._adv=false;
     const msgs={1:'Manche 1 : CACHE (5 min)',2:'Manche 2 : RECHERCHE LIBRE (10 min)',3:'Manche 3 : SOUS-ZONE (10 min)',4:'Manche 4 : FINAL (10 min)'};
     await sbPost('messages',{type:'announce',content:msgs[newR],game_id:game.id});
-    lastMinuteScored=0;
+    // Ne pas remettre lastMinuteScored à 0 — le mettre au nombre de minutes
+    // déjà écoulées pour éviter de payer les minutes passées en double
+    const gsNow = getGlobalSecs();
+    lastMinuteScored = Math.floor((TOTAL_SECS + extraSeconds - gsNow) / 60);
     showRoundOverlay(newR);
     outSecs=0;malusIdx=0;wasOut=false;hideZB();
     updatePhase();updateNextPhaseLabel();
@@ -1919,9 +1939,18 @@ function showRoundOverlay(r){
   if(r===4 && leafMap) showAllPositions15s();
 }
 
-function showAllPositions15s(){
+async function showAllPositions15s(){
+  // Lire les positions depuis Supabase pour avoir les données à jour
+  try{
+    const pos = await sbGet('positions?select=*');
+    if(Array.isArray(pos)){
+      pos.forEach(p=>{
+        const t=teams.find(t=>t.id===p.team_id);
+        if(t){t.lat=p.latitude;t.lng=p.longitude;}
+      });
+    }
+  }catch(e){}
   const tempMarkers=[];
-  // Créer des marqueurs temporaires pour toutes les équipes actives
   teams.forEach(t=>{
     if(!t.lat||!t.lng||t.id===myId) return;
     const icon=L.divIcon({
@@ -1970,17 +1999,21 @@ function updatePhase(){
 function startPolling(){
   setInterval(async()=>{
     try{
-      const pos=await sbGet('positions?select=*');
-      if(Array.isArray(pos)){
-        pos.forEach(p=>{
-          const t=teams.find(t=>t.id===p.team_id);
-          if(t&&t.id!==myId){
-            // Dernière position reçue = position affichée (simple et fiable)
-            t.lat=p.latitude;t.lng=p.longitude;
-            recordPosition(p.team_id,p.latitude,p.longitude);
+      // Positions : seulement l'admin les lit, toutes les 15 secondes
+      // Les joueurs ne lisent jamais les positions des autres (sauf révélation M4)
+      if(CU.type==='admin'){
+        const now = Date.now();
+        if(!window._lastAdminPosRead || now - window._lastAdminPosRead >= 15000){
+          window._lastAdminPosRead = now;
+          const pos=await sbGet('positions?select=*');
+          if(Array.isArray(pos)){
+            pos.forEach(p=>{
+              const t=teams.find(t=>t.id===p.team_id);
+              if(t){t.lat=p.latitude;t.lng=p.longitude;}
+            });
+            updateTeamMarkers();
           }
-        });
-        updateTeamMarkers();
+        }
       }
       const ft=await sbGet('teams?select=*&order=name');
       if(Array.isArray(ft)){ft.forEach(ft=>{const t=teams.find(t=>t.id===ft.id);if(t){t.status=ft.status;t.role=ft.role;t.score=ft.score;t.badges=ft.badges;}});buildTeams();updateCount();}
@@ -2032,7 +2065,9 @@ function startPolling(){
           }
           if(game && prevR && game.current_round !== prevR){
             showRoundOverlay(game.current_round);
-            outSecs=0;malusIdx=0;wasOut=false;lastMinuteScored=0;hideZB();
+            outSecs=0;malusIdx=0;wasOut=false;hideZB();
+            // Mettre lastMinuteScored aux minutes déjà écoulées (évite les points en double)
+            lastMinuteScored = Math.floor((TOTAL_SECS + extraSeconds - getGlobalSecs()) / 60);
             szPickerTriggered[game.current_round]=false;
           }
           updatePhase();
@@ -2664,6 +2699,7 @@ async function launchGame(){
       started_at: new Date().toISOString(),
       active_zone: launchConfig.zone,
       active_subzone: launchConfig.subzones.join(','),
+      initial_subzones: launchConfig.subzones.join(','),
       extra_seconds: 0
     });
     game = Array.isArray(gd) ? gd[0] : gd;
@@ -2942,9 +2978,10 @@ async function adminStartGame(){
     game=Array.isArray(gd)?gd[0]:gd;
     await sbPatch('events?id=eq.'+event_.id,{status:'active',current_game:gn});
     await sbPost('messages',{type:'announce',content:'Partie '+gn+' demarree ! Manche 1 : CACHE (5 min) — Chasseurs, restez immobiles !',game_id:game.id});
-    // Reset all teams to active for new game
+    // Reset ALL teams to active + score 0 for new game (including non-eliminated)
     for(const t of teams){
-      if(t.status==='eliminated'){await sbPatch('teams?id=eq.'+t.id,{status:'active',score:0});t.status='active';t.score=0;}
+      await sbPatch('teams?id=eq.'+t.id,{status:'active',score:0});
+      t.status='active';t.score=0;
     }
     toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);lastMinuteScored=0;extraSeconds=0;szPickerTriggered={2:false,3:false};updatePhase();startZoneCheck();startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
@@ -2952,6 +2989,31 @@ async function adminStartGame(){
     updateNextPhaseLabel();
     buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
+}
+
+// Version allégée pour les joueurs (pas de badges ni arrêt forcé)
+async function autoStopGame(){
+  if(!game) return;
+  // Vérifier que la partie est toujours active (guard anti-doublon)
+  const gd = await sbGet('games?id=eq.'+game.id+'&select=status');
+  if(!Array.isArray(gd)||!gd.length||gd[0].status!=='active') return;
+  try{
+    await applyEndBonuses();
+    await awardBadgesEndOfParty();
+    await sbPatch('games?id=eq.'+game.id,{status:'finished',finished_at:new Date().toISOString()});
+    await sbPost('messages',{type:'announce',content:'Partie terminee ! Consultez le classement final.',game_id:game.id});
+    game.status='finished';
+    if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
+    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    lastMinuteScored=0;
+    hideZB();
+    if(leafMap && mapLayers.activeSubzoneLayer){
+      leafMap.removeLayer(mapLayers.activeSubzoneLayer);
+      mapLayers.activeSubzoneLayer=null;
+    }
+    activateAllZonesByDefault();
+    updatePhase();updateZoneColors();
+  }catch(e){}
 }
 
 async function adminStopGame(){
@@ -2992,27 +3054,18 @@ function buildAdminSZEdit(){
   }
   sec.style.display = 'block';
 
-  // Les 3 sous-zones initiales = celles de la zone choisie (depuis launchConfig ou reconstruites)
-  const zoneName = game.active_zone;
-  const zoneData = ZONES_DATA[zoneName];
-  if(!zoneData){ sec.style.display='none'; return; }
-  const allSZ = zoneData.subzones; // toutes les SZ de la zone (pas seulement les actives)
-
-  // Les sous-zones actuellement actives
+  // Utiliser les 3 sous-zones initiales stockées au lancement (pas toutes les SZ de la zone)
+  const initialSZ = (game.initial_subzones||game.active_subzone||'').split(',').filter(Boolean);
   const currentActive = (game.active_subzone||'').split(',').filter(Boolean);
   adminSZSelection = [...currentActive];
 
-  // Info
   const info = document.getElementById('admin-sz-edit-info');
-  if(info) info.textContent = 'Zone : '+zoneName+' — Actives : '+currentActive.join(', ');
+  if(info) info.textContent = 'Sous-zones initiales : '+initialSZ.map(z=>ZONE_POLYS.find(p=>p.id===z)?.name||z).join(', ');
 
-  // Grille avec les 3 SZ initiales choisies au lancement
-  // On récupère les 3 SZ initiales depuis active_subzone étendu ou on les déduit
-  // Pour l'instant on affiche TOUTES les SZ de la zone pour permettre le choix
   const grid = document.getElementById('admin-sz-edit-grid');
   if(!grid) return;
   grid.innerHTML = '';
-  allSZ.forEach(szId => {
+  initialSZ.forEach(szId => {
     const btn = document.createElement('div');
     btn.style.cssText = 'padding:9px 4px;text-align:center;font-family:monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;border-radius:2px;border:1px solid var(--border);color:var(--text-dim);background:var(--forest);transition:all .15s';
     btn.textContent = szId;
@@ -3055,10 +3108,7 @@ async function adminApplySZEdit(){
 
     let msgContent = '🔧 Admin — Sous-zones modifiees : '+newNames;
     if(inPickerZone){
-      // Entre 23:00 et 20:00 ou 13:00 et 10:00 : préciser que c'est l'admin qui a choisi
-      const oldSZ = (game.active_subzone||'').split(',').filter(Boolean);
-      msgContent = '🔧 Admin — Choix sous-zones modifie. Sous-zones actives : '+newNames;
-      // Fermer le picker si ouvert
+      msgContent = '🔧 Admin — Choix sous-zones modifie par admin. Sous-zones actives : '+newNames;
       if(szPickerOpen) closeSZPicker();
     }
 
@@ -3108,9 +3158,9 @@ async function confirmReset(){
       await sbPatch('teams?id=eq.'+t.id,{score:0,status:'active',role:'chasse',badges:[],total_distance:0});
       t.score=0;t.status='active';t.role='chasse';t.badges=[];t.total_distance=0;
     }
-    // 3. Vider les messages de la radio
+    // 3. Vider les messages de la radio et les positions GPS
     const delRes=await fetch(SB_URL+'/rest/v1/messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
-    console.log('DELETE messages status:',delRes.status);
+    await fetch(SB_URL+'/rest/v1/positions?updated_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
     // 4. Mettre a jour l'affichage
     // Reset des stats locales de badges
     badgeStats={roundStartTime:null,firstDiscoveryTime:null,fastestDiscoveryTeam:null,teamDistances:{},teamHiddenTime:{},teamOutOfZoneTime:{},lastPositions:{}};
