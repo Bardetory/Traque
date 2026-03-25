@@ -1396,7 +1396,14 @@ async function boot(){
   setupTopbar();initMap();buildTeams();buildBadges();
   await refreshScores();await refreshChat();
   updatePhase();startTimer();startGPS();startPolling();
-  if(CU.type==='admin')buildAdminSelects();
+  if(CU.type==='admin'){
+    buildAdminSelects();
+    // Réactiver les boutons si une partie est déjà en cours
+    const gameActive = game && game.status==='active';
+    document.getElementById('btn-stop').disabled = !gameActive;
+    document.getElementById('btn-next-phase').disabled = !gameActive;
+    if(gameActive) updateNextPhaseLabel();
+  }
   toast('OK','Connecte','Bienvenue '+CU.name);
 }
 
@@ -2481,27 +2488,29 @@ async function refreshChat(){
     }
     const visible = msgs.filter(m => !m.content.startsWith('DECOUVERTE:'));
 
-    // Compter les nouveaux messages non lus (seulement si la radio n'est pas ouverte)
+    // Pastille : s'allume si un nouveau message arrive, s'éteint à l'ouverture de la radio
     const radioOpen = document.getElementById('d-chat').classList.contains('on');
-    // Pastille simple : s'allume dès qu'il y a un nouveau message non lu
     if(visible.length > 0){
       const latestId = visible[0].id;
       if(lastSeenMsgId === null){
-        // Premier chargement : tout est lu
+        // Premier chargement : tout est lu, pas de pastille
         lastSeenMsgId = latestId;
-      } else if(!radioOpen && latestId !== lastSeenMsgId){
-        // Nouveau message et radio fermée : allumer la pastille
-        unreadCount = 1;
+      } else if(latestId !== lastSeenMsgId){
+        if(radioOpen){
+          // Radio ouverte : message lu immédiatement
+          unreadCount = 0;
+          lastSeenMsgId = latestId;
+        } else {
+          // Nouveau message, radio fermée : allumer la pastille UNE SEULE FOIS
+          // et mettre à jour lastSeenMsgId pour ne pas réallumer à chaque cycle
+          unreadCount = 1;
+          lastSeenMsgId = latestId;
+        }
         updateRadioBadge();
-        // Ne pas mettre à jour lastSeenMsgId ici — on le fera à l'ouverture de la radio
-      }
-      if(radioOpen){
-        // Radio ouverte : tout est lu, éteindre la pastille et mémoriser le dernier id
+      } else if(radioOpen && unreadCount > 0){
+        // Radio ouverte et pastille allumée : éteindre
         unreadCount = 0;
-        lastSeenMsgId = latestId;
         updateRadioBadge();
-      } else if(lastSeenMsgId === null){
-        // Premier chargement déjà géré plus haut
       }
     }
 
