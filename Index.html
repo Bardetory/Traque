@@ -1712,9 +1712,12 @@ function denyFound(){
 
 // Fin de partie: bonus chassés jamais trouvés
 async function applyEndBonuses(){
-  const neverFound=teams.filter(t=>t.role==='chasse'&&t.status==='active');
+  // Bonus "jamais trouve" uniquement aux equipes connectees (ont une position GPS)
+  const posData = await sbGet('positions?select=team_id');
+  const connectedIds = new Set(Array.isArray(posData) ? posData.map(p=>p.team_id) : []);
+  const neverFound = teams.filter(t=>t.role==='chasse' && t.status==='active' && connectedIds.has(t.id));
   for(const t of neverFound){
-    await addScore(t.id,SCORE_CHASSE_BONUS,'Bonus jamais trouve !');
+    await addScore(t.id, SCORE_CHASSE_BONUS, 'Bonus jamais trouve !');
     await sbPost('messages',{type:'announce',content:t.name+' n\'a jamais ete trouvee ! Bonus +'+SCORE_CHASSE_BONUS+' pts',game_id:game?.id});
   }
 }
@@ -2953,6 +2956,8 @@ async function adminStartGame(){
 
 async function adminStopGame(){
   if(!game)return;
+  if(game._stop)return; // guard anti-doublon
+  game._stop=true;
   try{
     await applyEndBonuses();
     await awardBadgesEndOfParty();
