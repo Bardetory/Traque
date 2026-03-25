@@ -1220,8 +1220,6 @@ const ROUND_GS_END   = [0, 1800, 1200,  600,   0]; // gs a la FIN de la manche
 // Picker : gs déclencheur et gs deadline
 const SZ_PICKER_GS_TRIGGER  = {2: 1380, 3:  780}; // M2: 23:00 restantes, M3: 13:00
 const SZ_PICKER_GS_DEADLINE = {2: 1200, 3:  600}; // M2: 20:00 (fin M2),  M3: 10:00 (fin M3)
-// ROUND_DUR gardé uniquement pour les overlays
-const ROUND_DUR = [0, 300, 600, 600, 600];
 const ROUND_DESC=[
   '',
   'Cachez-vous ! Les chasseurs restent immobiles. (5 min)',
@@ -1517,8 +1515,8 @@ function startGPS(){
 
 // ══ SCORE ENGINE ══════════════════════════════
 function startScoreEngine(){
-  if(scoreInt)clearInterval(scoreInt);
-  lastMinuteScored=0;
+  if(scoreInt) return; // déjà en cours pour cette partie — ne pas relancer
+  lastMinuteScored = Math.floor((TOTAL_SECS + extraSeconds - getGlobalSecs()) / 60);
   scoreInt=setInterval(async()=>{
     if(!game||game.status!=='active'||CU.type==='admin')return;
     const r=game.current_round||0;
@@ -1574,7 +1572,7 @@ function selfReportFound(){
   // Créer un modal de confirmation simple
   const overlay = document.createElement('div');
   overlay.id = 'self-report-overlay';
-  overlay.id='badge-overlay';overlay.style.cssText = 'position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:970;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--forest-mid);border:2px solid var(--red);border-radius:2px;padding:28px 24px;width:calc(100% - 40px);max-width:320px;text-align:center">
       <div style="font-size:32px;margin-bottom:12px">🚨</div>
@@ -1670,7 +1668,11 @@ function checkPendingDiscovery(msgs){
   if(!myTeam||myTeam.role!=='chasse'||myTeam.status==='eliminated')return;
   const recent=msgs.filter(m=>m.type==='alert'&&m.content.startsWith('DECOUVERTE:'+myId+':'));
   if(recent.length>0&&!pendingFoundBy){
-    const hunterTeamId=recent[recent.length-1].content.split(':')[2];
+    const lastMsg = recent[recent.length-1];
+    // Ignorer les notifications de découverte de plus de 5 minutes (expiré)
+    const msgAge = (Date.now() - new Date(lastMsg.created_at).getTime()) / 1000;
+    if(msgAge > 300) return; // plus de 5 minutes — ignorer
+    const hunterTeamId=lastMsg.content.split(':')[2];
     const hunter=teams.find(t=>t.id===hunterTeamId);
     pendingFoundBy=hunterTeamId;
     document.getElementById('found-hunter-name').textContent=hunter?hunter.name:'Un chasseur';
@@ -1783,10 +1785,16 @@ async function applyMalus(pts){
 async function autoElim(){
   try{
     await sbPatch('teams?id=eq.'+myId,{status:'eliminated'});
+    // Mettre à jour le statut local immédiatement pour stopper le zone check
+    const myTeam = teams.find(t=>t.id===myId);
+    if(myTeam) myTeam.status='eliminated';
     await sbPost('messages',{type:'alert',content:CU.name+' eliminee automatiquement (hors zone 100pts)',game_id:game?.id});
     toast('X','Elimine','Votre equipe est eliminee !');
     if(navigator.vibrate)navigator.vibrate([300,100,300,100,300]);
-    hideZB();if(zoneInt){clearInterval(zoneInt);zoneInt=null;}if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    hideZB();
+    if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
+    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    lastMinuteScored=0;
   }catch(e){}
 }
 
@@ -2048,6 +2056,8 @@ function startPolling(){
           }
           if(!wasA&&game){
             szPickerTriggered={2:false,3:false};
+            game._stop=false; // réinitialiser le guard de fin de partie
+            scoreInt=null;    // forcer le redémarrage du score engine
             toast('!','Partie','La partie a commence!');
             showRoundOverlay(1);startZoneCheck();startScoreEngine();
           }
@@ -2978,10 +2988,10 @@ async function adminStartGame(){
     game=Array.isArray(gd)?gd[0]:gd;
     await sbPatch('events?id=eq.'+event_.id,{status:'active',current_game:gn});
     await sbPost('messages',{type:'announce',content:'Partie '+gn+' demarree ! Manche 1 : CACHE (5 min) — Chasseurs, restez immobiles !',game_id:game.id});
-    // Reset ALL teams to active + score 0 for new game (including non-eliminated)
+    // Reset ALL teams : score, statut ET rôle remis à chasse
     for(const t of teams){
-      await sbPatch('teams?id=eq.'+t.id,{status:'active',score:0});
-      t.status='active';t.score=0;
+      await sbPatch('teams?id=eq.'+t.id,{status:'active',score:0,role:'chasse'});
+      t.status='active';t.score=0;t.role='chasse';
     }
     toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);lastMinuteScored=0;extraSeconds=0;szPickerTriggered={2:false,3:false};updatePhase();startZoneCheck();startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
@@ -2994,9 +3004,11 @@ async function adminStartGame(){
 // Version allégée pour les joueurs (pas de badges ni arrêt forcé)
 async function autoStopGame(){
   if(!game) return;
-  // Vérifier que la partie est toujours active (guard anti-doublon)
+  if(game._stop) return; // guard partagé avec adminStopGame
+  game._stop = true;
+  // Vérifier que la partie est toujours active dans Supabase
   const gd = await sbGet('games?id=eq.'+game.id+'&select=status');
-  if(!Array.isArray(gd)||!gd.length||gd[0].status!=='active') return;
+  if(!Array.isArray(gd)||!gd.length||gd[0].status!=='active'){ game._stop=false; return; }
   try{
     await applyEndBonuses();
     await awardBadgesEndOfParty();
