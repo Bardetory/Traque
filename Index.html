@@ -1318,21 +1318,26 @@ function logout(){
 
 async function init(){
   try{
-  const[td,ed]=await Promise.all([sbGet('teams?select=*&order=name'),sbGet('events?select=*&order=created_at.desc&limit=1')]);
+    const[td,ed]=await Promise.all([sbGet('teams?select=*&order=name'),sbGet('events?select=*&order=created_at.desc&limit=1')]);
     teams=Array.isArray(td)?td:[];
     event_=Array.isArray(ed)&&ed.length?ed[0]:null;
     if(event_&&event_.status==='active'){
       const gd=await sbGet('games?event_id=eq.'+event_.id+'&status=eq.active&limit=1');
       game=Array.isArray(gd)&&gd.length?gd[0]:null;
     }
+    // Toujours cacher l'écran de chargement
+    document.getElementById('loading').style.display='none';
     // Tenter la reconnexion automatique
     const autoLogged = await tryAutoLogin();
     if(!autoLogged){
-      setTimeout(()=>{document.getElementById('loading').style.display='none';document.getElementById('login-screen').style.display='flex';},1000);
+      document.getElementById('login-screen').style.display='flex';
     }
   }catch(e){
     document.getElementById('loading-txt').textContent='Erreur - verifiez votre connexion';
-    setTimeout(()=>{document.getElementById('loading').style.display='none';document.getElementById('login-screen').style.display='flex';},2000);
+    setTimeout(()=>{
+      document.getElementById('loading').style.display='none';
+      document.getElementById('login-screen').style.display='flex';
+    },2000);
   }
 }
 
@@ -3188,7 +3193,7 @@ async function confirmReset(){
     // 4. Mettre a jour l'affichage
     // Reset des stats locales de badges
     badgeStats={roundStartTime:null,firstDiscoveryTime:null,fastestDiscoveryTeam:null,teamDistances:{},teamHiddenTime:{},teamOutOfZoneTime:{},lastPositions:{}};
-    buildTeams();updatePhase();
+    buildTeams();renderBadgeDrawer();updatePhase();
     document.getElementById('btn-stop').disabled=true;
     document.getElementById('btn-next-phase').disabled=true;
     // Vider l'affichage de la radio immediatement
