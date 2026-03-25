@@ -1210,12 +1210,10 @@ const SCORE_PERFECT_HUNT = 400;       // bonus chasse parfaite (V17)
 
 // ── ROUNDS ─────────────────────────────────────
 const ROUND_NAMES=['','Cache','Recherche Libre','Sous-Zone','Final'];
-// CORRECTION: Manche 1 = 5min (300s)
 // ══ SYSTÈME DE CHRONO GLOBAL (V15) ════════════════════════════
 const TOTAL_SECS = 2100; // 35 minutes au total
 // Bornes du chrono global pour chaque manche (secondes RESTANTES)
 // M1: gs entre 2100 et 1800, M2: entre 1800 et 1200, etc.
-const ROUND_GS_START = [0, 2100, 1800, 1200, 600]; // gs au DEBUT de la manche
 const ROUND_GS_END   = [0, 1800, 1200,  600,   0]; // gs a la FIN de la manche
 // Picker : gs déclencheur et gs deadline
 const SZ_PICKER_GS_TRIGGER  = {2: 1380, 3:  780}; // M2: 23:00 restantes, M3: 13:00
@@ -1321,7 +1319,14 @@ async function boot(){
 
 function setupTopbar(){
   if(CU.type==='admin'){document.getElementById('tname').textContent='ADMIN';document.getElementById('trole').textContent='ADMIN';document.getElementById('trole').className='trole ra';document.getElementById('nadmin').style.display='flex';}
-  else{document.getElementById('tname').textContent=CU.name;document.getElementById('trole').textContent=CU.role==='chasseur'?'CHASSEUR':'CHASSE';document.getElementById('trole').className='trole '+(CU.role==='chasseur'?'rh':'rc');}
+  else{
+    document.getElementById('tname').textContent=CU.name;
+    // Utiliser le rôle actuel de l'équipe (pas CU.role figé au login)
+    const myTeamObj=teams.find(t=>t.id===myId);
+    const currentRole = myTeamObj?.role || CU.role;
+    document.getElementById('trole').textContent=currentRole==='chasseur'?'CHASSEUR':'CHASSE';
+    document.getElementById('trole').className='trole '+(currentRole==='chasseur'?'rh':'rc');
+  }
   updateCount();
 }
 function updateCount(){const a=teams.filter(t=>t.status==='active').length;document.getElementById('ocnt').textContent=showCount?a+' equipes':'-- equipes';}
@@ -1712,6 +1717,7 @@ async function confirmFound(){
     toast('X','Elimine','Votre equipe est eliminee. +'+pts+' pts aux chasseurs.');
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
     if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    lastMinuteScored=0;
     hideZB();buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
   pendingFoundBy=null;
@@ -1922,15 +1928,11 @@ async function advanceRound(newR){
     updatePhase();updateNextPhaseLabel();
     // Reset le flag picker pour la nouvelle manche
     szPickerTriggered[newR]=false;
+    // Réinitialiser le guard timeout picker pour la prochaine phase picker
+    sbPatch('games?id=eq.'+game.id, {picker_timeout_applied: false}).catch(()=>{});
   }catch(e){game._adv=false;}
 }
 
-// autoNextRound gardé pour compatibilité avec adminNextPhase
-async function autoNextRound(){
-  const gs = getGlobalSecs();
-  const nr = getRoundFromGlobal(gs);
-  if(nr > 0) await advanceRound(nr);
-}
 
 function showRoundOverlay(r){
   if(r===2) recordRound2Start();
@@ -2084,7 +2086,7 @@ function startPolling(){
         }
       }
       // Check pending discovery messages
-      const msgs=await sbGet('messages?select=*&order=created_at.desc&limit=50');
+      const msgs=await sbGet('messages?select=*&order=created_at.desc&limit=100');
       checkPendingDiscovery(msgs);
     }catch(e){}
   },3000);
@@ -2120,10 +2122,12 @@ async function refreshScores(){
 function buildTeams(){
   const gameActive = game && game.status==='active';
   const r = game?.current_round||0;
-  // Chasseur peut déclarer une trouvaille à partir de M2
-  const isChaseur = CU.type==='team' && CU.role==='chasseur' && gameActive && r>=2;
-  // Chassé peut se déclarer trouvé si encore actif et partie active
   const myTeamObj = teams.find(t=>t.id===myId);
+  // Mettre à jour la topbar si le rôle a changé
+  if(CU.type==='team') setupTopbar();
+  // Chasseur peut déclarer une trouvaille à partir de M2
+  const isChaseur = CU.type==='team' && myTeamObj?.role==='chasseur' && gameActive && r>=2;
+  // Chassé peut se déclarer trouvé si encore actif et partie active
   const isChasse = CU.type==='team' && myTeamObj?.role==='chasse' && myTeamObj?.status==='active' && gameActive && r>=2;
 
   document.getElementById('team-list').innerHTML=teams.map(t=>{
@@ -2241,8 +2245,8 @@ function recordPosition(teamId, lat, lng){
   const last = badgeStats.lastPositions[teamId];
   if(last){
     const dist = haversine(last.lat, last.lng, lat, lng);
-    // Filtrer les sauts aberrants (>100m en une mesure = erreur GPS)
-    if(dist < 100){
+    // Filtrer les oscillations GPS : ignorer < 3m (bruit) et > 100m (saut aberrant)
+    if(dist >= 3 && dist < 100){
       badgeStats.teamDistances[teamId] = (badgeStats.teamDistances[teamId]||0) + dist;
     }
   }
@@ -2396,12 +2400,15 @@ async function refreshChat(){
         // Nouveau message et radio fermée : allumer la pastille
         unreadCount = 1;
         updateRadioBadge();
+        // Ne pas mettre à jour lastSeenMsgId ici — on le fera à l'ouverture de la radio
       }
       if(radioOpen){
-        // Radio ouverte : tout est lu, éteindre la pastille
+        // Radio ouverte : tout est lu, éteindre la pastille et mémoriser le dernier id
         unreadCount = 0;
         lastSeenMsgId = latestId;
         updateRadioBadge();
+      } else if(lastSeenMsgId === null){
+        // Premier chargement déjà géré plus haut
       }
     }
 
@@ -2409,125 +2416,8 @@ async function refreshChat(){
   }catch(e){}
 }
 
+
 // ══ ADMIN ══════════════════════════════════════
-// ── TEAM MANAGEMENT ──────────────────────────
-const TEAM_COLORS = [
-  '#7fff4f','#ffb830','#60a5fa','#f97316',
-  '#e879f9','#34d399','#fb7185','#facc15',
-  '#38bdf8','#a78bfa','#f43f5e','#84cc16'
-];
-let subModalMode = null;
-let subModalTeamId = null;
-let selectedColor = TEAM_COLORS[0];
-
-function buildAdminTeamList(){
-  const list = document.getElementById('admin-team-manage-list');
-  if(!list) return;
-  list.innerHTML = teams.map(t => `
-    <div class="team-manage-row">
-      <div class="tind" style="background:${t.color};box-shadow:0 0 6px ${t.color}55"></div>
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase">${t.name}</div>
-        <div style="font-size:11px;color:var(--text-dim)">${(t.members||[]).join(', ')||'—'}</div>
-      </div>
-      <div class="team-manage-actions">
-        <button class="tmini-btn" onclick="openEditPass('${t.id}')">MDP</button>
-        <button class="tmini-btn danger" onclick="openDeleteTeam('${t.id}')">Suppr.</button>
-      </div>
-    </div>`).join('');
-}
-
-function buildColorPalette(containerId){
-  const el = document.getElementById(containerId);
-  if(!el) return;
-  el.innerHTML = TEAM_COLORS.map(c => `
-    <div class="color-swatch ${c===selectedColor?'sel':''}"
-      style="background:${c}"
-      onclick="selectColor('${c}','${containerId}')"></div>`).join('');
-}
-
-function selectColor(color, containerId){
-  selectedColor = color;
-  buildColorPalette(containerId);
-}
-
-function openCreateTeam(){
-  subModalMode = 'create';
-  subModalTeamId = null;
-  selectedColor = TEAM_COLORS[0];
-  document.getElementById('sub-title').textContent = 'Creer une equipe';
-  document.getElementById('sub-create').style.display = 'block';
-  document.getElementById('sub-edit-pass').style.display = 'none';
-  document.getElementById('sub-confirm-delete').style.display = 'none';
-  document.getElementById('new-team-name').value = '';
-  document.getElementById('new-team-pass').value = '';
-  document.getElementById('new-team-members').value = '';
-  buildColorPalette('color-palette-create');
-  document.getElementById('sub-modal').style.display = 'flex';
-}
-
-function openEditPass(teamId){
-  subModalMode = 'editpass';
-  subModalTeamId = teamId;
-  const t = teams.find(x=>x.id===teamId);
-  document.getElementById('sub-title').textContent = 'Modifier MDP — ' + (t?.name||'');
-  document.getElementById('sub-create').style.display = 'none';
-  document.getElementById('sub-edit-pass').style.display = 'block';
-  document.getElementById('sub-confirm-delete').style.display = 'none';
-  document.getElementById('edit-team-pass').value = '';
-  document.getElementById('sub-modal').style.display = 'flex';
-}
-
-function openDeleteTeam(teamId){
-  subModalMode = 'delete';
-  subModalTeamId = teamId;
-  const t = teams.find(x=>x.id===teamId);
-  document.getElementById('sub-title').textContent = 'Supprimer ' + (t?.name||'') + ' ?';
-  document.getElementById('sub-create').style.display = 'none';
-  document.getElementById('sub-edit-pass').style.display = 'none';
-  document.getElementById('sub-confirm-delete').style.display = 'block';
-  document.getElementById('sub-confirm-btn').style.background = 'var(--red)';
-  document.getElementById('sub-confirm-btn').style.color = '#fff';
-  document.getElementById('sub-modal').style.display = 'flex';
-}
-
-function closeSubModal(){
-  document.getElementById('sub-modal').style.display = 'none';
-  document.getElementById('sub-confirm-btn').style.background = '';
-  document.getElementById('sub-confirm-btn').style.color = '';
-  subModalMode = null; subModalTeamId = null;
-}
-
-async function subModalConfirm(){
-  if(subModalMode === 'create'){
-    const name = document.getElementById('new-team-name').value.toUpperCase().trim();
-    const pass = document.getElementById('new-team-pass').value.trim();
-    const membersRaw = document.getElementById('new-team-members').value.trim();
-    const members = membersRaw ? membersRaw.split(',').map(m=>m.trim()).filter(Boolean) : [];
-    if(!name||!pass){toast('!','Erreur','Nom et mot de passe requis');return;}
-    if(teams.find(t=>t.name===name)){toast('!','Erreur','Ce nom existe deja');return;}
-    try{
-      const res = await sbPost('teams',{name,password_hash:pass,color:selectedColor,members,role:'chasse',status:'active',score:0,badges:[]});
-      const newTeam = Array.isArray(res)?res[0]:res;
-      if(newTeam?.id){teams.push(newTeam);buildTeams();buildAdminSelects();buildAdminTeamList();}
-      toast('+','Equipe',name+' creee !');closeSubModal();
-    }catch(e){toast('X','Erreur',''+e.message);}
-  } else if(subModalMode === 'editpass'){
-    const pass = document.getElementById('edit-team-pass').value.trim();
-    if(!pass){toast('!','Erreur','Mot de passe requis');return;}
-    try{
-      await sbPatch('teams?id=eq.'+subModalTeamId,{password_hash:pass});
-      toast('OK','MDP','Mot de passe modifie');closeSubModal();
-    }catch(e){toast('X','Erreur',''+e.message);}
-  } else if(subModalMode === 'delete'){
-    try{
-      await fetch(SB_URL+'/rest/v1/teams?id=eq.'+subModalTeamId,{method:'DELETE',headers:{...H,'Prefer':''}});
-      teams = teams.filter(t=>t.id!==subModalTeamId);
-      buildTeams();buildAdminSelects();buildAdminTeamList();
-      toast('OK','Equipe','Equipe supprimee');closeSubModal();
-    }catch(e){toast('X','Erreur',''+e.message);}
-  }
-}
 
 function buildAdminSelects(){
   const activeTeams = teams.filter(t=>t.status!=='eliminated');
@@ -2535,7 +2425,9 @@ function buildAdminSelects(){
   const elScore=document.getElementById('score-team');
   if(elScore) elScore.innerHTML=allTeams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
   const elElim=document.getElementById('elim-team');
-  if(elElim) elElim.innerHTML=activeTeams.map(t=>`<option value="${t.id}">${t.name} (${t.role==='chasseur'?'Chasseur':'Chasse'})</option>`).join('');
+  // Ne montrer que les chassés actifs (les chasseurs ne peuvent pas être "trouvés")
+  const eligibleElim = activeTeams.filter(t=>t.role==='chasse');
+  if(elElim) elElim.innerHTML=eligibleElim.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
 }
 
 async function adminValidateDiscovery(){
@@ -2710,6 +2602,7 @@ async function launchGame(){
       active_zone: launchConfig.zone,
       active_subzone: launchConfig.subzones.join(','),
       initial_subzones: launchConfig.subzones.join(','),
+      picker_timeout_applied: false,
       extra_seconds: 0
     });
     game = Array.isArray(gd) ? gd[0] : gd;
@@ -2844,19 +2737,29 @@ async function confirmSZPick(){
 
 async function applyTimeoutPenalty(){
   if(!game || !game.active_subzone) return;
-  // Vérifier que personne n'a déjà fait le choix pendant qu'on attendait
-  // On relit Supabase pour avoir la valeur la plus récente
   try{
-    const gd = await sbGet('games?id=eq.'+game.id+'&select=active_subzone,extra_seconds');
+    // Guard atomique : lire l'état actuel de la partie
+    const gd = await sbGet('games?id=eq.'+game.id+'&select=active_subzone,picker_timeout_applied,extra_seconds');
     const freshGame = Array.isArray(gd) ? gd[0] : gd;
     if(!freshGame) return;
+
+    // Si un chasseur a déjà choisi une sous-zone, on ne fait rien
     const current = freshGame.active_subzone ? freshGame.active_subzone.split(',').filter(Boolean) : [];
-    // Si active_subzone a déjà changé (un autre chasseur a choisi), on ne fait rien
     if(current.length < (game.active_subzone.split(',').filter(Boolean).length)){
       game.active_subzone = freshGame.active_subzone;
       return;
     }
-    // Personne n'a choisi : suppression aléatoire
+
+    // Si le timeout a déjà été appliqué par un autre téléphone, on ne fait rien
+    if(freshGame.picker_timeout_applied) return;
+
+    // Marquer le timeout comme appliqué en Supabase (guard anti-doublon)
+    const patchRes = await sbPatch('games?id=eq.'+game.id+'&picker_timeout_applied=eq.false',
+      {picker_timeout_applied: true});
+    // Si le patch n'a rien modifié (un autre téléphone était plus rapide), on arrête
+    if(!Array.isArray(patchRes) || patchRes.length === 0) return;
+
+    // On est le premier — appliquer la suppression aléatoire
     const randomIdx = Math.floor(Math.random() * current.length);
     const eliminated = current[randomIdx];
     const remaining = current.filter(z => z !== eliminated);
@@ -2884,7 +2787,6 @@ async function applyTimeoutPenalty(){
     buildTeams();
     toast('⏰','Timeout','-100 pts. Sous-zone supprimee aleatoirement.');
     updateZoneColors();
-    // La manche avancera automatiquement via le chrono global
   }catch(e){ toast('X','Erreur',''+e.message); }
 }
 
@@ -3134,6 +3036,10 @@ async function adminApplySZEdit(){
 }
 
 async function adminEndEvent(){
+  if(game && game.status==='active'){
+    toast('!','Attention','Terminez la partie avant de distribuer les badges');
+    return;
+  }
   await awardBadgesEndOfEvent();
   toast('🏆','Evenement','Points de badges distribues !');
 }
@@ -3184,7 +3090,6 @@ async function confirmReset(){
     toast('🔄','Reset','Evenement reinitialise !');
   }catch(e){console.error('Reset error:',e);toast('X','Erreur',''+e.message);}
 }
-async function adminSetRole(){const tid=document.getElementById('role-team').value,role=document.getElementById('role-val').value;try{await sbPatch('teams?id=eq.'+tid,{role});const t=teams.find(t=>t.id===tid);if(t){t.role=role;buildTeams();}toast('~','Role','Mis a jour');closeDrawer('admin');}catch(e){toast('X','Erreur',''+e.message);}}
 async function adminEliminate(){
   const tid=document.getElementById('elim-team').value;
   if(!tid){toast('!','Admin','Selectionnez une equipe');return;}
