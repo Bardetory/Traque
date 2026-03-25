@@ -1267,6 +1267,55 @@ function isInZone(lat,lng){
   return false;
 }
 
+
+// ══ MODE ÉCONOMIE BATTERIE ═══════════════════════════════════════
+let appVisible = true;
+let pollingInterval = null;
+
+document.addEventListener('visibilitychange', ()=>{
+  appVisible = !document.hidden;
+  // Quand l'app revient au premier plan : forcer une mise à jour immédiate
+  if(appVisible){
+    // Réactiver le GPS haute précision
+    if(gpsId){
+      navigator.geolocation.clearWatch(gpsId);
+      gpsId=null;
+      startGPS();
+    }
+  }
+});
+
+// Wrapper pour limiter les actions quand l'app est en arrière-plan
+function isActiveSession(){
+  return appVisible && CU !== null;
+}
+
+function logout(){
+  // Arrêter tous les timers
+  if(gpsId){navigator.geolocation.clearWatch(gpsId);gpsId=null;}
+  if(timerInt){clearInterval(timerInt);timerInt=null;}
+  if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
+  if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+  // Réinitialiser toutes les variables de session
+  CU=null;myId=null;game=null;
+  lastMinuteScored=0;
+  outSecs=0;malusIdx=0;wasOut=false;
+  myLat=null;myLng=null;
+  szPickerTriggered={2:false,3:false};
+  szPickerOpen=false;
+  pendingFoundBy=null;
+  lastPositionSent=0;
+  extraSeconds=0;
+  unreadCount=0;lastSeenMsgId=null;
+  selfReportModal=false;
+  if(myMarker&&leafMap){leafMap.removeLayer(myMarker);myMarker=null;}
+  if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
+  // Effacer la session sauvegardée
+  try{localStorage.removeItem('traque_session');}catch(e){}
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+}
+
 async function init(){
   try{
   const[td,ed]=await Promise.all([sbGet('teams?select=*&order=name'),sbGet('events?select=*&order=created_at.desc&limit=1')]);
@@ -1276,7 +1325,11 @@ async function init(){
       const gd=await sbGet('games?event_id=eq.'+event_.id+'&status=eq.active&limit=1');
       game=Array.isArray(gd)&&gd.length?gd[0]:null;
     }
-    setTimeout(()=>{document.getElementById('loading').style.display='none';document.getElementById('login-screen').style.display='flex';},1000);
+    // Tenter la reconnexion automatique
+    const autoLogged = await tryAutoLogin();
+    if(!autoLogged){
+      setTimeout(()=>{document.getElementById('loading').style.display='none';document.getElementById('login-screen').style.display='flex';},1000);
+    }
   }catch(e){
     document.getElementById('loading-txt').textContent='Erreur - verifiez votre connexion';
     setTimeout(()=>{document.getElementById('loading').style.display='none';document.getElementById('login-screen').style.display='flex';},2000);
@@ -1293,7 +1346,10 @@ async function loginTeam(){
   if(!code||!pass)return;setSpin('t',true);
   try{const d=await sbGet('teams?name=eq.'+encodeURIComponent(code)+'&select=*');
     if(!Array.isArray(d)||!d.length||d[0].password_hash!==pass){showErr();return;}
-    const t=d[0];CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role};myId=t.id;boot();
+    const t=d[0];CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role};myId=t.id;
+    // Sauvegarder pour reconnexion automatique
+    try{localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass}));}catch(e){}
+    boot();
   }catch(e){showErr();}finally{setSpin('t',false);}
 }
 async function loginAdmin(){
@@ -1301,8 +1357,30 @@ async function loginAdmin(){
   if(!u||!p)return;setSpin('a',true);
   try{const d=await sbGet('admins?username=eq.'+encodeURIComponent(u)+'&select=*');
     if(!Array.isArray(d)||!d.length||d[0].password_hash!==p){showErr();return;}
-    CU={type:'admin',name:'ADMIN'};boot();
+    CU={type:'admin',name:'ADMIN'};
+    try{localStorage.setItem('traque_session',JSON.stringify({type:'admin',u,p}));}catch(e){}
+    boot();
   }catch(e){showErr();}finally{setSpin('a',false);}
+}
+
+// Tentative de reconnexion automatique au chargement
+async function tryAutoLogin(){
+  try{
+    const saved = localStorage.getItem('traque_session');
+    if(!saved) return false;
+    const s = JSON.parse(saved);
+    if(s.type==='team'){
+      const d=await sbGet('teams?name=eq.'+encodeURIComponent(s.code)+'&select=*');
+      if(!Array.isArray(d)||!d.length||d[0].password_hash!==s.pass) return false;
+      const t=d[0];CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role};myId=t.id;
+      boot(); return true;
+    } else if(s.type==='admin'){
+      const d=await sbGet('admins?username=eq.'+encodeURIComponent(s.u)+'&select=*');
+      if(!Array.isArray(d)||!d.length||d[0].password_hash!==s.p) return false;
+      CU={type:'admin',name:'ADMIN'};boot(); return true;
+    }
+  }catch(e){}
+  return false;
 }
 function setSpin(w,on){document.getElementById('btn-'+w+'l').disabled=on;document.getElementById('sp-'+w).style.display=on?'block':'none';}
 function showErr(){const e=document.getElementById('errmsg');e.style.display='block';setTimeout(()=>e.style.display='none',3000);}
@@ -1508,7 +1586,8 @@ function startGPS(){
     recordPosition(myId, myLat, myLng);
     // Envoi Supabase : toutes les 15 secondes max
     const now = Date.now();
-    if(now - lastPositionSent >= 15000){
+    const gpsSendInterval = appVisible ? 15000 : 30000; // 15s actif, 30s arrière-plan
+    if(now - lastPositionSent >= gpsSendInterval){
       lastPositionSent = now;
       sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({team_id:myId,latitude:myLat,longitude:myLng,accuracy:pos.coords.accuracy,updated_at:new Date().toISOString()}),headers:{...H,'Prefer':'resolution=merge-duplicates'}}).catch(()=>{});
     }
@@ -2008,6 +2087,14 @@ function updatePhase(){
 // ══ POLLING ═══════════════════════════════════
 function startPolling(){
   setInterval(async()=>{
+    // En arrière-plan : limiter les requêtes (1 sur 3 seulement)
+    if(!appVisible){
+      if(!window._bgPollCount) window._bgPollCount=0;
+      window._bgPollCount++;
+      if(window._bgPollCount % 3 !== 0) return; // skip 2 cycles sur 3
+    } else {
+      window._bgPollCount=0;
+    }
     try{
       // Positions : seulement l'admin les lit, toutes les 15 secondes
       // Les joueurs ne lisent jamais les positions des autres (sauf révélation M4)
@@ -2062,6 +2149,7 @@ function startPolling(){
             scoreInt=null;    // forcer le redémarrage du score engine
             toast('!','Partie','La partie a commence!');
             showRoundOverlay(1);startZoneCheck();startScoreEngine();
+            if(game.active_zone) zoomToZone(game.active_zone); // zoom sur la zone
           }
           // Reconnexion pendant une partie active : vérifier si le picker doit être ouvert
           if(game && game.status==='active' && wasA && CU.type==='team'){
@@ -2578,6 +2666,23 @@ function checkLaunchReady(){
   document.getElementById('lm-go-btn').disabled = !ok;
 }
 
+
+// ══ ZOOM AUTOMATIQUE SUR LA ZONE ════════════════════════════════
+function zoomToZone(zoneName){
+  if(!leafMap || !zoneName) return;
+  // Récupérer toutes les sous-zones visuelles de cette famille
+  const subzones = ZONE_POLYS_VISUAL.filter(z => z.family === zoneName);
+  if(!subzones.length) return;
+  // Calculer les bounds à partir de toutes les coordonnées
+  const allCoords = subzones.flatMap(z => z.coords);
+  const lats = allCoords.map(c => c[1]);
+  const lngs = allCoords.map(c => c[0]);
+  const bounds = [
+    [Math.min(...lats), Math.min(...lngs)],
+    [Math.max(...lats), Math.max(...lngs)]
+  ];
+  leafMap.fitBounds(bounds, {padding: [40, 40], animate: true});
+}
 async function launchGame(){
   if(!event_){toast('!','Admin','Aucun evenement');return;}
   closeLaunchModal();
@@ -2627,6 +2732,7 @@ async function launchGame(){
     lastMinuteScored=0;
     updatePhase();
     updateZoneColors();
+    zoomToZone(launchConfig.zone); // zoom sur la zone de jeu
     startZoneCheck();
     startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
@@ -3150,7 +3256,6 @@ function openDrawer(id){
 function closeDrawer(id){document.getElementById('d-'+id).classList.remove('on');}
 function navClick(btn,id){document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');if(id)openDrawer(id);}
 function toast(icon,title,text){const el=document.createElement('div');el.className='toast';el.innerHTML='<div class="ticon">'+icon+'</div><div class="ttext"><div class="ttitle">'+title+'</div><div>'+text+'</div></div>';document.getElementById('toasts').appendChild(el);setTimeout(()=>el.remove(),3300);}
-function logout(){if(gpsId)navigator.geolocation.clearWatch(gpsId);clearInterval(timerInt);if(zoneInt)clearInterval(zoneInt);if(scoreInt)clearInterval(scoreInt);CU=null;myId=null;game=null;document.getElementById('app').style.display='none';document.getElementById('login-screen').style.display='flex';}
 
 init();
 </script>
