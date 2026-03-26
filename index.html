@@ -1252,9 +1252,7 @@ let mapLayers={chemins:null,eau:null,limite:null,subzone:null};
 let layerVisible={chemins:true,eau:true,limite:false};
 let pendingFoundBy=null; // team id of hunter who found us
 let lastMinuteScored=0; // track last minute we gave points
-let mySessionId=null;   // identifiant unique de cette session
-let mySessionRowId=null; // id de la ligne positions dans Supabase
-let myGpsIsPrimary=true; // cette session est-elle la prioritaire pour l'affichage ?
+
 function pip(lat,lng,poly){
   if(!poly||poly.length<3)return true;
   let inside=false;const x=lng,y=lat;
@@ -1318,24 +1316,13 @@ function logout(){
   szPickerOpen=false;
   pendingFoundBy=null;
   lastPositionSent=0;
-  // Marquer la session comme inactive dans Supabase
-  if(mySessionRowId){
-    sbPatch('positions?id=eq.'+mySessionRowId,{is_active:false,has_gps:false}).catch(()=>{});
-  }
-  mySessionId=null;mySessionRowId=null;
   extraSeconds=0;
   unreadCount=0;lastSeenMsgId=null;
   selfReportModal=false;
   if(myMarker&&leafMap){leafMap.removeLayer(myMarker);myMarker=null;}
   if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
   // Effacer la session sauvegardée
-  // Marquer la session inactive dans Supabase
-  if(mySessionId){
-    sb('positions?session_id=eq.'+mySessionId,{method:'PATCH',
-      body:JSON.stringify({is_active:false,has_gps:false}),headers:{...H,'Prefer':''}
-    }).catch(()=>{});
-    mySessionId=null; mySessionRowId=null;
-  }
+
   try{localStorage.removeItem('traque_session');}catch(e){}
   document.getElementById('app').style.display='none';
   document.getElementById('login-screen').style.display='flex';
@@ -1435,8 +1422,6 @@ function showErr(){const e=document.getElementById('errmsg');e.style.display='bl
 async function boot(){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
-  // Générer un identifiant unique pour cette session
-  mySessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
   setupTopbar();initMap();buildTeams();buildBadges();
   await refreshScores();await refreshChat();
   updatePhase();startTimer();startGPS();startPolling();
@@ -1448,38 +1433,17 @@ async function boot(){
     document.getElementById('btn-next-phase').disabled = !gameActive;
     if(gameActive) updateNextPhaseLabel();
     // Charger les positions au démarrage pour affichage immédiat
-    sbGet('positions?select=*&order=connected_at.asc').then(pos=>{
-      if(Array.isArray(pos)) applyPositionPriority(pos);
+    sbGet('positions?select=*').then(pos=>{
+      if(Array.isArray(pos)){
+        pos.forEach(p=>{const t=teams.find(t=>t.id===p.team_id);if(t){t.lat=p.latitude;t.lng=p.longitude;}});
+        updateTeamMarkers();
+      }
     }).catch(()=>{});
   }
   toast('OK','Connecte','Bienvenue '+CU.name);
-  // Initialiser la session de position (joueurs uniquement)
-  if(CU.type==='team') initPositionSession();
 }
 
-async function initPositionSession(){
-  // Générer un identifiant unique pour cette session
-  mySessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-  try{
-    // Créer une nouvelle ligne pour cette session
-    const res = await sb('positions',{method:'POST',
-      body:JSON.stringify({
-        team_id: myId,
-        session_id: mySessionId,
-        connected_at: new Date().toISOString(),
-        is_active: true,
-        has_gps: false,
-        latitude: null,
-        longitude: null,
-        accuracy: null,
-        updated_at: new Date().toISOString()
-      }),
-      headers:{...H,'Prefer':'return=representation'}
-    });
-    const row = Array.isArray(res)?res[0]:res;
-    if(row?.id) mySessionRowId = row.id;
-  }catch(e){}
-}
+
 
 function setupTopbar(){
   if(!CU) return; // guard : ne pas s'exécuter si pas connecté
@@ -1634,44 +1598,6 @@ function toggleLayer(name){
 }
 
 
-// ══ SYSTÈME DE PRIORITÉ DES POSITIONS ═══════════════════════════
-// Règle : pour chaque équipe, on affiche la position de la session
-// active avec GPS la plus ancienne. Si aucune session active avec GPS,
-// on prend la dernière position connue (même inactive).
-function applyPositionPriority(positions){
-  // Grouper par équipe
-  const byTeam = {};
-  positions.forEach(p => {
-    if(!byTeam[p.team_id]) byTeam[p.team_id] = [];
-    byTeam[p.team_id].push(p);
-  });
-
-  Object.entries(byTeam).forEach(([teamId, rows]) => {
-    const t = teams.find(t => t.id === teamId);
-    if(!t) return;
-
-    // Priorité 1 : sessions actives avec GPS (connected_at.asc = plus ancienne en premier)
-    const activeWithGps = rows.filter(r => r.is_active && r.has_gps && r.latitude != null);
-    if(activeWithGps.length > 0){
-      t.lat = activeWithGps[0].latitude;
-      t.lng = activeWithGps[0].longitude;
-      return;
-    }
-
-    // Priorité 2 : sessions actives sans GPS → garder dernière position connue
-    // (ne pas écraser avec null)
-
-    // Priorité 3 : dernière position connue toutes sessions
-    const withPos = rows.filter(r => r.latitude != null);
-    if(withPos.length > 0){
-      withPos.sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at));
-      t.lat = withPos[0].latitude;
-      t.lng = withPos[0].longitude;
-    }
-  });
-
-  updateTeamMarkers();
-}
 function updateTeamMarkers(){
   Object.values(teamMarkers).forEach(m=>leafMap.removeLayer(m));teamMarkers={};
   teams.forEach(t=>{
@@ -1719,32 +1645,24 @@ function startGPS(){
     // Envoyer la position à Supabase (15s actif, 30s arrière-plan)
     // La position est TOUJOURS stockée — même hors partie — pour permettre
     // à l'admin de voir la dernière position connue
+    // Envoi Supabase toutes les 15s (30s arrière-plan) — upsert simple par team_id
     const now = Date.now();
     const gpsSendInterval = appVisible ? 15000 : 30000;
     if(now - lastPositionSent >= gpsSendInterval){
       lastPositionSent = now;
-      if(mySessionId){
-        // Mettre à jour la ligne de cette session (has_gps=true)
-        sb('positions?session_id=eq.'+mySessionId,{method:'PATCH',
-          body:JSON.stringify({
-            latitude:myLat, longitude:myLng,
-            accuracy:pos.coords.accuracy,
-            updated_at:new Date().toISOString(),
-            has_gps:true, is_active:true
-          }),
-          headers:{...H,'Prefer':''}
-        }).catch(()=>{});
-      }
+      sb('positions?team_id=eq.'+myId,{method:'POST',
+        body:JSON.stringify({
+          team_id:myId, latitude:myLat, longitude:myLng,
+          accuracy:pos.coords.accuracy,
+          updated_at:new Date().toISOString()
+        }),
+        headers:{...H,'Prefer':'resolution=merge-duplicates'}
+      }).catch(()=>{});
     }
   },err=>{
     const msgs={1:'Permission GPS refusee — autorisez dans votre navigateur',2:'Position indisponible',3:'Timeout GPS — reessai...'};
     showGPSBanner(true, msgs[err.code]||'GPS indisponible');
-    // Marquer cette session comme sans GPS pour laisser la priorité à une autre
-    if(mySessionId){
-      sb('positions?session_id=eq.'+mySessionId,{method:'PATCH',
-        body:JSON.stringify({has_gps:false}),headers:{...H,'Prefer':''}
-      }).catch(()=>{});
-    }
+
   },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 }
 
@@ -2188,7 +2106,9 @@ async function showAllPositions15s(){
   // Lire les positions depuis Supabase pour avoir les données à jour
   try{
     const pos = await sbGet('positions?select=*&order=connected_at.asc');
-    if(Array.isArray(pos)) applyPositionPriority(pos);
+    if(Array.isArray(pos)){
+      pos.forEach(p=>{const t=teams.find(t=>t.id===p.team_id);if(t){t.lat=p.latitude;t.lng=p.longitude;}});
+    }
   }catch(e){}
   const tempMarkers=[];
   teams.forEach(t=>{
@@ -2255,22 +2175,15 @@ function startPolling(){
           window._lastAdminPosRead = now;
           const pos=await sbGet('positions?select=*&order=connected_at.asc');
           if(Array.isArray(pos)){
-            applyPositionPriority(pos);
+            pos.forEach(p=>{
+              const t=teams.find(t=>t.id===p.team_id);
+              if(t){t.lat=p.latitude;t.lng=p.longitude;}
+            });
+            updateTeamMarkers();
           }
         }
       }
-      // Vérifier périodiquement si cette session est toujours prioritaire
-      if(CU.type==='team' && mySessionId){
-        const now2 = Date.now();
-        if(!window._lastPriorityCheck || now2 - window._lastPriorityCheck >= 30000){
-          window._lastPriorityCheck = now2;
-          sbGet('positions?team_id=eq.'+myId+'&is_active=eq.true&has_gps=eq.true&select=session_id,connected_at&order=connected_at.asc&limit=1').then(rows=>{
-            if(Array.isArray(rows) && rows.length > 0){
-              myGpsIsPrimary = (rows[0].session_id === mySessionId);
-            }
-          }).catch(()=>{});
-        }
-      }
+
       const ft=await sbGet('teams?select=*&order=name');
       if(Array.isArray(ft)){ft.forEach(ft=>{const t=teams.find(t=>t.id===ft.id);if(t){t.status=ft.status;t.role=ft.role;t.score=ft.score;t.badges=ft.badges;}});buildTeams();updateCount();}
       if(event_){
@@ -3318,12 +3231,7 @@ async function adminForceDisconnect(){
       await sbPatch('events?id=eq.'+event_.id, {session_token: newToken});
       event_.session_token = newToken;
     }
-    // 2. Marquer toutes les sessions positions comme inactives
-    await fetch(SB_URL+'/rest/v1/positions?is_active=eq.true',{
-      method:'PATCH',
-      body:JSON.stringify({is_active:false, has_gps:false}),
-      headers:{...H,'Prefer':''}
-    });
+
     // 3. Message radio pour informer
     await sbPost('messages',{type:'alert',
       content:'⛔ Admin — Toutes les sessions ont été révoquées. Reconnectez-vous.',
@@ -3376,7 +3284,7 @@ async function confirmReset(){
     }
     // 3. Vider les messages de la radio et les positions GPS
     const delRes=await fetch(SB_URL+'/rest/v1/messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
-    await fetch(SB_URL+'/rest/v1/positions?team_id=gt.0',{method:'DELETE',headers:{...H,'Prefer':''}}).catch(()=>fetch(SB_URL+'/rest/v1/positions?updated_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}}));
+    await fetch(SB_URL+'/rest/v1/positions?updated_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}}).catch(()=>{});
     // Réinitialiser les marqueurs locaux
     Object.values(teamMarkers).forEach(m=>{if(leafMap)leafMap.removeLayer(m);}); teamMarkers={};
     teams.forEach(t=>{t.lat=null;t.lng=null;});
