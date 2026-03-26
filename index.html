@@ -1144,6 +1144,10 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
     </div>
 
     <div class="asec">
+      <div class="asectitle">Deconnexion forcee</div>
+      <button class="abtn danger" onclick="adminForceDisconnect()"><span class="ai">⛔</span> Deconnecter tout le monde</button>
+    </div>
+    <div class="asec">
       <div class="asectitle">Fin d evenement</div>
       <button class="abtn ok" onclick="adminEndEvent()"><span class="ai">🏆</span> Distribuer points badges</button>
     </div>
@@ -1248,7 +1252,8 @@ let mapLayers={chemins:null,eau:null,limite:null,subzone:null};
 let layerVisible={chemins:true,eau:true,limite:false};
 let pendingFoundBy=null; // team id of hunter who found us
 let lastMinuteScored=0; // track last minute we gave points
-
+let mySessionId=null;   // identifiant unique de cette session
+let mySessionRowId=null; // id de la ligne positions dans Supabase
 function pip(lat,lng,poly){
   if(!poly||poly.length<3)return true;
   let inside=false;const x=lng,y=lat;
@@ -1312,12 +1317,24 @@ function logout(){
   szPickerOpen=false;
   pendingFoundBy=null;
   lastPositionSent=0;
+  // Marquer la session comme inactive dans Supabase
+  if(mySessionRowId){
+    sbPatch('positions?id=eq.'+mySessionRowId,{is_active:false,has_gps:false}).catch(()=>{});
+  }
+  mySessionId=null;mySessionRowId=null;
   extraSeconds=0;
   unreadCount=0;lastSeenMsgId=null;
   selfReportModal=false;
   if(myMarker&&leafMap){leafMap.removeLayer(myMarker);myMarker=null;}
   if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
   // Effacer la session sauvegardée
+  // Marquer la session inactive dans Supabase
+  if(mySessionId){
+    sb('positions?session_id=eq.'+mySessionId,{method:'PATCH',
+      body:JSON.stringify({is_active:false,has_gps:false}),headers:{...H,'Prefer':''}
+    }).catch(()=>{});
+    mySessionId=null; mySessionRowId=null;
+  }
   try{localStorage.removeItem('traque_session');}catch(e){}
   document.getElementById('app').style.display='none';
   document.getElementById('login-screen').style.display='flex';
@@ -1360,7 +1377,12 @@ async function loginTeam(){
     if(!Array.isArray(d)||!d.length||d[0].password_hash!==pass){showErr();return;}
     const t=d[0];CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role};myId=t.id;
     // Sauvegarder pour reconnexion automatique
-    try{localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass}));}catch(e){}
+    try{
+      // Lire le token courant depuis Supabase pour le sauvegarder
+      const ev = await sbGet('events?select=session_token&order=created_at.desc&limit=1');
+      const tok = (Array.isArray(ev)&&ev.length) ? (ev[0].session_token||'0') : '0';
+      localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass,token:tok}));
+    }catch(e){try{localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass,token:'0'}));}catch(e2){}}
     boot();
   }catch(e){showErr();}finally{setSpin('t',false);}
 }
@@ -1370,7 +1392,11 @@ async function loginAdmin(){
   try{const d=await sbGet('admins?username=eq.'+encodeURIComponent(u)+'&select=*');
     if(!Array.isArray(d)||!d.length||d[0].password_hash!==p){showErr();return;}
     CU={type:'admin',name:'ADMIN'};
-    try{localStorage.setItem('traque_session',JSON.stringify({type:'admin',u,p}));}catch(e){}
+    try{
+      const ev = await sbGet('events?select=session_token&order=created_at.desc&limit=1');
+      const tok = (Array.isArray(ev)&&ev.length) ? (ev[0].session_token||'0') : '0';
+      localStorage.setItem('traque_session',JSON.stringify({type:'admin',u,p,token:tok}));
+    }catch(e){try{localStorage.setItem('traque_session',JSON.stringify({type:'admin',u,p,token:'0'}));}catch(e2){}}
     boot();
   }catch(e){showErr();}finally{setSpin('a',false);}
 }
@@ -1381,6 +1407,14 @@ async function tryAutoLogin(){
     const saved = localStorage.getItem('traque_session');
     if(!saved) return false;
     const s = JSON.parse(saved);
+    // Vérifier que le token de révocation n'a pas changé
+    const ev = await sbGet('events?select=session_token&order=created_at.desc&limit=1');
+    const currentToken = (Array.isArray(ev)&&ev.length) ? (ev[0].session_token||'0') : '0';
+    if(s.token !== currentToken){
+      // Token révoqué par l'admin — effacer et forcer connexion manuelle
+      try{localStorage.removeItem('traque_session');}catch(e){}
+      return false;
+    }
     if(s.type==='team'){
       const d=await sbGet('teams?name=eq.'+encodeURIComponent(s.code)+'&select=*');
       if(!Array.isArray(d)||!d.length||d[0].password_hash!==s.pass) return false;
@@ -1400,6 +1434,8 @@ function showErr(){const e=document.getElementById('errmsg');e.style.display='bl
 async function boot(){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
+  // Générer un identifiant unique pour cette session
+  mySessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
   setupTopbar();initMap();buildTeams();buildBadges();
   await refreshScores();await refreshChat();
   updatePhase();startTimer();startGPS();startPolling();
@@ -1411,15 +1447,50 @@ async function boot(){
     document.getElementById('btn-next-phase').disabled = !gameActive;
     if(gameActive) updateNextPhaseLabel();
     // Charger les positions au démarrage pour affichage immédiat
-    sbGet('positions?select=*').then(pos=>{
-      if(Array.isArray(pos)) pos.forEach(p=>{
-        const t=teams.find(t=>t.id===p.team_id);
-        if(t){t.lat=p.latitude;t.lng=p.longitude;}
-      });
-      updateTeamMarkers();
+    sbGet('positions?select=*&order=connected_at.asc').then(pos=>{
+      if(Array.isArray(pos)){
+        const byTeam = {};
+        pos.forEach(p=>{ if(!byTeam[p.team_id]) byTeam[p.team_id]=[]; byTeam[p.team_id].push(p); });
+        Object.entries(byTeam).forEach(([teamId,sessions])=>{
+          const t=teams.find(t=>t.id===teamId); if(!t) return;
+          const activeGps=sessions.filter(s=>s.is_active&&s.has_gps&&s.latitude);
+          if(activeGps.length){t.lat=activeGps[0].latitude;t.lng=activeGps[0].longitude;return;}
+          const active=sessions.filter(s=>s.is_active&&s.latitude);
+          if(active.length){t.lat=active[0].latitude;t.lng=active[0].longitude;return;}
+          const any=sessions.filter(s=>s.latitude).sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
+          if(any.length){t.lat=any[0].latitude;t.lng=any[0].longitude;}
+        });
+        updateTeamMarkers();
+      }
     }).catch(()=>{});
   }
   toast('OK','Connecte','Bienvenue '+CU.name);
+  // Initialiser la session de position (joueurs uniquement)
+  if(CU.type==='team') initPositionSession();
+}
+
+async function initPositionSession(){
+  // Générer un identifiant unique pour cette session
+  mySessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  try{
+    // Créer une nouvelle ligne pour cette session
+    const res = await sb('positions',{method:'POST',
+      body:JSON.stringify({
+        team_id: myId,
+        session_id: mySessionId,
+        connected_at: new Date().toISOString(),
+        is_active: true,
+        has_gps: false,
+        latitude: null,
+        longitude: null,
+        accuracy: null,
+        updated_at: new Date().toISOString()
+      }),
+      headers:{...H,'Prefer':'return=representation'}
+    });
+    const row = Array.isArray(res)?res[0]:res;
+    if(row?.id) mySessionRowId = row.id;
+  }catch(e){}
 }
 
 function setupTopbar(){
@@ -1574,6 +1645,50 @@ function toggleLayer(name){
   document.getElementById('lbtn-'+name).classList.toggle('on',layerVisible[name]);
 }
 
+
+// ══ SYSTÈME DE PRIORITÉ DES POSITIONS ═══════════════════════════
+// Règle : pour chaque équipe, on affiche la position de la session
+// active avec GPS la plus ancienne. Si aucune session active avec GPS,
+// on prend la dernière position connue (même inactive).
+function applyPositionPriority(positions){
+  // Grouper par équipe
+  const byTeam = {};
+  positions.forEach(p => {
+    if(!byTeam[p.team_id]) byTeam[p.team_id] = [];
+    byTeam[p.team_id].push(p);
+  });
+
+  Object.entries(byTeam).forEach(([teamId, rows]) => {
+    const t = teams.find(t => t.id === teamId);
+    if(!t) return;
+
+    // Priorité 1 : sessions actives avec GPS, triées par connected_at (plus ancien = prioritaire)
+    const activeWithGps = rows.filter(r => r.is_active && r.has_gps);
+    if(activeWithGps.length > 0){
+      // Prendre la plus ancienne (déjà triée par connected_at.asc)
+      const best = activeWithGps[0];
+      if(best.latitude !== 0 || best.longitude !== 0){
+        t.lat = best.latitude;
+        t.lng = best.longitude;
+        return;
+      }
+    }
+
+    // Priorité 2 : sessions actives sans GPS (connectées mais GPS perdu)
+    // → ne pas mettre à jour, garder la dernière position connue
+
+    // Priorité 3 : dernière position connue parmi toutes les sessions
+    // (triées par updated_at desc pour avoir la plus récente)
+    const withPos = rows.filter(r => r.latitude !== 0 || r.longitude !== 0);
+    if(withPos.length > 0){
+      withPos.sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at));
+      t.lat = withPos[0].latitude;
+      t.lng = withPos[0].longitude;
+    }
+  });
+
+  updateTeamMarkers();
+}
 function updateTeamMarkers(){
   Object.values(teamMarkers).forEach(m=>leafMap.removeLayer(m));teamMarkers={};
   teams.forEach(t=>{
@@ -1608,8 +1723,12 @@ function startGPS(){
   gpsId=navigator.geolocation.watchPosition(pos=>{
     showGPSBanner(false);
     myLat=pos.coords.latitude;myLng=pos.coords.longitude;
-    // Mise à jour visuelle immédiate (zéro requête réseau)
-    const iconHtml='<div style="width:16px;height:16px;background:'+CU.color+';border:2px solid #0d1f0f;border-radius:50%;box-shadow:0 0 14px '+CU.color+'cc"></div>';
+    // Mise à jour visuelle immédiate
+    // Couleur : vert normal si session prioritaire, gris si secondaire
+    const isPrimary = !myGpsIsPrimary || myGpsIsPrimary === true;
+    const markerColor = isPrimary ? CU.color : '#888888';
+    const markerGlow = isPrimary ? ('0 0 14px '+CU.color+'cc') : 'none';
+    const iconHtml='<div style="width:16px;height:16px;background:'+markerColor+';border:2px solid #0d1f0f;border-radius:50%;box-shadow:'+markerGlow+'"></div>';
     const icon=L.divIcon({className:'',html:iconHtml,iconSize:[16,16],iconAnchor:[8,8]});
     if(myMarker)leafMap.removeLayer(myMarker);
     myMarker=L.marker([myLat,myLng],{icon,zIndexOffset:1000}).addTo(leafMap);
@@ -1625,17 +1744,28 @@ function startGPS(){
     const gpsSendInterval = appVisible ? 15000 : 30000;
     if(now - lastPositionSent >= gpsSendInterval){
       lastPositionSent = now;
-      sb('positions?team_id=eq.'+myId,{method:'POST',body:JSON.stringify({
-        team_id:myId,
-        latitude:myLat,
-        longitude:myLng,
-        accuracy:pos.coords.accuracy,
-        updated_at:new Date().toISOString()
-      }),headers:{...H,'Prefer':'resolution=merge-duplicates'}}).catch(()=>{});
+      if(mySessionId){
+        // Mettre à jour la ligne de cette session (has_gps=true)
+        sb('positions?session_id=eq.'+mySessionId,{method:'PATCH',
+          body:JSON.stringify({
+            latitude:myLat, longitude:myLng,
+            accuracy:pos.coords.accuracy,
+            updated_at:new Date().toISOString(),
+            has_gps:true, is_active:true
+          }),
+          headers:{...H,'Prefer':''}
+        }).catch(()=>{});
+      }
     }
   },err=>{
     const msgs={1:'Permission GPS refusee — autorisez dans votre navigateur',2:'Position indisponible',3:'Timeout GPS — reessai...'};
     showGPSBanner(true, msgs[err.code]||'GPS indisponible');
+    // Marquer cette session comme sans GPS pour laisser la priorité à une autre
+    if(mySessionId){
+      sb('positions?session_id=eq.'+mySessionId,{method:'PATCH',
+        body:JSON.stringify({has_gps:false}),headers:{...H,'Prefer':''}
+      }).catch(()=>{});
+    }
   },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 }
 
@@ -1856,8 +1986,9 @@ function denyFound(){
 
 // Fin de partie: bonus chassés jamais trouvés
 async function applyEndBonuses(){
-  // Bonus "jamais trouve" uniquement aux equipes connectees (ont une position GPS)
-  const posData = await sbGet('positions?select=team_id');
+  // Bonus "jamais trouvé" uniquement aux équipes qui ont été connectées
+  // (ont au moins une session dans positions, active ou non)
+  const posData = await sbGet('positions?select=team_id&is_active=eq.true');
   const connectedIds = new Set(Array.isArray(posData) ? posData.map(p=>p.team_id) : []);
   const neverFound = teams.filter(t=>t.role==='chasse' && t.status==='active' && connectedIds.has(t.id));
   for(const t of neverFound){
@@ -2077,11 +2208,16 @@ function showRoundOverlay(r){
 async function showAllPositions15s(){
   // Lire les positions depuis Supabase pour avoir les données à jour
   try{
-    const pos = await sbGet('positions?select=*');
+    const pos = await sbGet('positions?select=*&order=connected_at.asc');
     if(Array.isArray(pos)){
-      pos.forEach(p=>{
-        const t=teams.find(t=>t.id===p.team_id);
-        if(t){t.lat=p.latitude;t.lng=p.longitude;}
+      const byTeam={};
+      pos.forEach(p=>{if(!byTeam[p.team_id])byTeam[p.team_id]=[];byTeam[p.team_id].push(p);});
+      Object.entries(byTeam).forEach(([teamId,sessions])=>{
+        const t=teams.find(t=>t.id===teamId);if(!t)return;
+        const activeGps=sessions.filter(s=>s.is_active&&s.has_gps&&s.latitude);
+        if(activeGps.length){t.lat=activeGps[0].latitude;t.lng=activeGps[0].longitude;return;}
+        const any=sessions.filter(s=>s.latitude).sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
+        if(any.length){t.lat=any[0].latitude;t.lng=any[0].longitude;}
       });
     }
   }catch(e){}
@@ -2148,14 +2284,53 @@ function startPolling(){
         const now = Date.now();
         if(!window._lastAdminPosRead || now - window._lastAdminPosRead >= 15000){
           window._lastAdminPosRead = now;
-          const pos=await sbGet('positions?select=*');
+          const pos=await sbGet('positions?select=*&order=connected_at.asc');
           if(Array.isArray(pos)){
+            // Pour chaque équipe : choisir la meilleure position selon priorité
+            // 1. Session active avec GPS → la plus ancienne (connected_at le plus petit)
+            // 2. Session active sans GPS → la plus ancienne
+            // 3. Aucune session active → dernière position connue (updated_at le plus grand)
+            const byTeam = {};
             pos.forEach(p=>{
-              const t=teams.find(t=>t.id===p.team_id);
-              if(t){t.lat=p.latitude;t.lng=p.longitude;}
+              if(!byTeam[p.team_id]) byTeam[p.team_id] = [];
+              byTeam[p.team_id].push(p);
+            });
+            Object.entries(byTeam).forEach(([teamId, sessions])=>{
+              const t = teams.find(t=>t.id===teamId);
+              if(!t) return;
+              // Priorité 1 : sessions actives avec GPS (déjà triées par connected_at asc)
+              const activeWithGps = sessions.filter(s=>s.is_active && s.has_gps && s.latitude);
+              if(activeWithGps.length > 0){
+                t.lat=activeWithGps[0].latitude; t.lng=activeWithGps[0].longitude;
+                return;
+              }
+              // Priorité 2 : sessions actives sans GPS
+              const activeNoGps = sessions.filter(s=>s.is_active && s.latitude);
+              if(activeNoGps.length > 0){
+                t.lat=activeNoGps[0].latitude; t.lng=activeNoGps[0].longitude;
+                return;
+              }
+              // Priorité 3 : dernière position connue (toutes sessions)
+              const withPos = sessions.filter(s=>s.latitude).sort((a,b)=>
+                new Date(b.updated_at)-new Date(a.updated_at));
+              if(withPos.length > 0){
+                t.lat=withPos[0].latitude; t.lng=withPos[0].longitude;
+              }
             });
             updateTeamMarkers();
           }
+        }
+      }
+      // Vérifier périodiquement si cette session est toujours prioritaire
+      if(CU.type==='team' && mySessionId){
+        const now2 = Date.now();
+        if(!window._lastPriorityCheck || now2 - window._lastPriorityCheck >= 30000){
+          window._lastPriorityCheck = now2;
+          sbGet('positions?team_id=eq.'+myId+'&is_active=eq.true&has_gps=eq.true&select=session_id,connected_at&order=connected_at.asc&limit=1').then(rows=>{
+            if(Array.isArray(rows) && rows.length > 0){
+              myGpsIsPrimary = (rows[0].session_id === mySessionId);
+            }
+          }).catch(()=>{});
         }
       }
       const ft=await sbGet('teams?select=*&order=name');
@@ -3197,6 +3372,29 @@ async function adminApplySZEdit(){
   }catch(e){ toast('X','Erreur',''+e.message); }
 }
 
+async function adminForceDisconnect(){
+  try{
+    // 1. Incrémenter le token de révocation → invalide tous les localStorage
+    const newToken = Date.now().toString(36);
+    if(event_){
+      await sbPatch('events?id=eq.'+event_.id, {session_token: newToken});
+      event_.session_token = newToken;
+    }
+    // 2. Marquer toutes les sessions positions comme inactives
+    await fetch(SB_URL+'/rest/v1/positions?is_active=eq.true',{
+      method:'PATCH',
+      body:JSON.stringify({is_active:false, has_gps:false}),
+      headers:{...H,'Prefer':''}
+    });
+    // 3. Message radio pour informer
+    await sbPost('messages',{type:'alert',
+      content:'⛔ Admin — Toutes les sessions ont été révoquées. Reconnectez-vous.',
+      game_id:game?.id});
+    toast('⛔','Deconnexion','Toutes les sessions révoquées');
+    closeDrawer('admin');
+  }catch(e){toast('X','Erreur',''+e.message);}
+}
+
 async function adminEndEvent(){
   if(game && game.status==='active'){
     toast('!','Attention','Terminez la partie avant de distribuer les badges');
@@ -3240,7 +3438,10 @@ async function confirmReset(){
     }
     // 3. Vider les messages de la radio et les positions GPS
     const delRes=await fetch(SB_URL+'/rest/v1/messages?created_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
-    await fetch(SB_URL+'/rest/v1/positions?updated_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}});
+    await fetch(SB_URL+'/rest/v1/positions?team_id=gt.0',{method:'DELETE',headers:{...H,'Prefer':''}}).catch(()=>fetch(SB_URL+'/rest/v1/positions?updated_at=gt.1970-01-01T00:00:00Z',{method:'DELETE',headers:{...H,'Prefer':''}}));
+    // Réinitialiser les marqueurs locaux
+    Object.values(teamMarkers).forEach(m=>{if(leafMap)leafMap.removeLayer(m);}); teamMarkers={};
+    teams.forEach(t=>{t.lat=null;t.lng=null;});
     // 4. Mettre a jour l'affichage
     // Reset des stats locales de badges
     badgeStats={roundStartTime:null,firstDiscoveryTime:null,fastestDiscoveryTeam:null,teamDistances:{},teamHiddenTime:{},teamOutOfZoneTime:{},lastPositions:{}};
