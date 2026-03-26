@@ -1885,7 +1885,7 @@ function denyFound(){
 async function applyEndBonuses(){
   // Bonus "jamais trouvé" uniquement aux équipes qui ont été connectées
   // (ont au moins une session dans positions, active ou non)
-  const posData = await sbGet('positions?select=team_id&is_active=eq.true');
+  const posData = await sbGet('positions?select=team_id');
   const connectedIds = new Set(Array.isArray(posData) ? posData.map(p=>p.team_id) : []);
   const neverFound = teams.filter(t=>t.role==='chasse' && t.status==='active' && connectedIds.has(t.id));
   for(const t of neverFound){
@@ -2105,7 +2105,7 @@ function showRoundOverlay(r){
 async function showAllPositions15s(){
   // Lire les positions depuis Supabase pour avoir les données à jour
   try{
-    const pos = await sbGet('positions?select=*&order=connected_at.asc');
+    const pos = await sbGet('positions?select=*');
     if(Array.isArray(pos)){
       pos.forEach(p=>{const t=teams.find(t=>t.id===p.team_id);if(t){t.lat=p.latitude;t.lng=p.longitude;}});
     }
@@ -2173,7 +2173,7 @@ function startPolling(){
         const now = Date.now();
         if(!window._lastAdminPosRead || now - window._lastAdminPosRead >= 15000){
           window._lastAdminPosRead = now;
-          const pos=await sbGet('positions?select=*&order=connected_at.asc');
+          const pos=await sbGet('positions?select=*');
           if(Array.isArray(pos)){
             pos.forEach(p=>{
               const t=teams.find(t=>t.id===p.team_id);
