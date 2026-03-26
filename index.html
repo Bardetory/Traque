@@ -1303,6 +1303,9 @@ function isActiveSession(){
 }
 
 function logout(){
+  // Sauvegarder id et token AVANT de tout effacer
+  const _myId = myId;
+  const _deviceToken = CU?.device_token;
   // Arrêter tous les timers
   if(gpsId){navigator.geolocation.clearWatch(gpsId);gpsId=null;}
   if(timerInt){clearInterval(timerInt);timerInt=null;}
@@ -1322,11 +1325,9 @@ function logout(){
   selfReportModal=false;
   if(myMarker&&leafMap){leafMap.removeLayer(myMarker);myMarker=null;}
   if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
-  // Effacer la session sauvegardée
-
   // Effacer le device_token pour permettre une nouvelle connexion
-  if(myId && CU?.device_token){
-    sbPatch('teams?id=eq.'+myId, {device_token: null}).catch(()=>{});
+  if(_myId && _deviceToken){
+    sbPatch('teams?id=eq.'+_myId, {device_token: null}).catch(()=>{});
   }
   try{localStorage.removeItem('traque_session');}catch(e){}
   document.getElementById('app').style.display='none';
