@@ -1326,8 +1326,12 @@ function logout(){
   if(myMarker&&leafMap){leafMap.removeLayer(myMarker);myMarker=null;}
   if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
   // Effacer le device_token pour permettre une nouvelle connexion
-  if(_myId && _deviceToken){
-    sbPatch('teams?id=eq.'+_myId, {device_token: null}).catch(()=>{});
+  if(_myId){
+    fetch(SB_URL+'/rest/v1/teams?id=eq.'+_myId,{
+      method:'PATCH',
+      headers:{...H,'Prefer':'return=minimal'},
+      body:JSON.stringify({device_token:null})
+    }).catch(()=>{});
   }
   try{localStorage.removeItem('traque_session');}catch(e){}
   document.getElementById('app').style.display='none';
@@ -3245,7 +3249,7 @@ async function adminForceDisconnect(){
 
     // 3. Effacer tous les device_tokens
     for(const t of teams){
-      await sbPatch('teams?id=eq.'+t.id, {device_token: null}).catch(()=>{});
+      await fetch(SB_URL+'/rest/v1/teams?id=eq.'+t.id,{method:'PATCH',headers:{...H,'Prefer':'return=minimal'},body:JSON.stringify({device_token:null})}).catch(()=>{});
       t.device_token = null;
     }
     // 4. Message radio pour informer
@@ -3295,7 +3299,7 @@ async function confirmReset(){
     }
     // 2. Remettre toutes les equipes a zero
     for(const t of teams){
-      await sbPatch('teams?id=eq.'+t.id,{score:0,status:'active',role:'chasse',badges:[],total_distance:0,device_token:null});
+      await fetch(SB_URL+'/rest/v1/teams?id=eq.'+t.id,{method:'PATCH',headers:{...H,'Prefer':'return=minimal'},body:JSON.stringify({score:0,status:'active',role:'chasse',badges:[],total_distance:0,device_token:null})}).catch(()=>{});
       t.score=0;t.status='active';t.role='chasse';t.badges=[];t.total_distance=0;
     }
     // 3. Vider les messages de la radio et les positions GPS
