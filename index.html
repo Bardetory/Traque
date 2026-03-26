@@ -920,6 +920,7 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <button class="btn-go" id="btn-al" onclick="loginAdmin()">Acceder<div class="btn-spin" id="sp-a"></div></button>
     </div>
     <div class="err" id="errmsg">Code ou mot de passe incorrect.</div>
+    <div class="err" id="errmsg-busy" style="display:none">Un membre de cette equipe est deja connecte.</div>
   </div>
 </div>
 
@@ -1323,6 +1324,10 @@ function logout(){
   if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
   // Effacer la session sauvegardée
 
+  // Effacer le device_token pour permettre une nouvelle connexion
+  if(myId && CU?.device_token){
+    sbPatch('teams?id=eq.'+myId, {device_token: null}).catch(()=>{});
+  }
   try{localStorage.removeItem('traque_session');}catch(e){}
   document.getElementById('app').style.display='none';
   document.getElementById('login-screen').style.display='flex';
@@ -1361,16 +1366,26 @@ function switchTab(t){
 async function loginTeam(){
   const code=document.getElementById('tcode').value.toUpperCase().trim(),pass=document.getElementById('tpass').value.trim();
   if(!code||!pass)return;setSpin('t',true);
-  try{const d=await sbGet('teams?name=eq.'+encodeURIComponent(code)+'&select=*');
+  try{
+    const d=await sbGet('teams?name=eq.'+encodeURIComponent(code)+'&select=*');
     if(!Array.isArray(d)||!d.length||d[0].password_hash!==pass){showErr();return;}
-    const t=d[0];CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role};myId=t.id;
+    const t=d[0];
+    // Vérifier si un membre est déjà connecté (device_token non null)
+    if(t.device_token){
+      document.getElementById('errmsg-busy').style.display='block';
+      setTimeout(()=>document.getElementById('errmsg-busy').style.display='none',4000);
+      return;
+    }
+    // Générer et écrire notre device_token pour bloquer les connexions simultanées
+    const myToken = Date.now().toString(36)+Math.random().toString(36).slice(2);
+    await sbPatch('teams?id=eq.'+t.id, {device_token: myToken});
+    CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role,device_token:myToken};myId=t.id;
     // Sauvegarder pour reconnexion automatique
     try{
-      // Lire le token courant depuis Supabase pour le sauvegarder
       const ev = await sbGet('events?select=session_token&order=created_at.desc&limit=1');
       const tok = (Array.isArray(ev)&&ev.length) ? (ev[0].session_token||'0') : '0';
-      localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass,token:tok}));
-    }catch(e){try{localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass,token:'0'}));}catch(e2){}}
+      localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass,token:tok,device_token:myToken}));
+    }catch(e){try{localStorage.setItem('traque_session',JSON.stringify({type:'team',code,pass,token:'0',device_token:myToken}));}catch(e2){}}
     boot();
   }catch(e){showErr();}finally{setSpin('t',false);}
 }
@@ -1406,7 +1421,18 @@ async function tryAutoLogin(){
     if(s.type==='team'){
       const d=await sbGet('teams?name=eq.'+encodeURIComponent(s.code)+'&select=*');
       if(!Array.isArray(d)||!d.length||d[0].password_hash!==s.pass) return false;
-      const t=d[0];CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role};myId=t.id;
+      const t=d[0];
+      // Vérifier que le device_token correspond (c'est bien nous)
+      // Si le token stocké correspond → c'est notre session, on reprend
+      // Si le token est différent → quelqu'un d'autre s'est connecté, on efface et on arrête
+      if(t.device_token && t.device_token !== s.device_token){
+        try{localStorage.removeItem('traque_session');}catch(e){}
+        return false;
+      }
+      // Réécrire notre token (au cas où il aurait été effacé par un reset)
+      const myToken = s.device_token || (Date.now().toString(36)+Math.random().toString(36).slice(2));
+      await sbPatch('teams?id=eq.'+t.id, {device_token: myToken});
+      CU={type:'team',name:t.name,id:t.id,color:t.color,role:t.role,device_token:myToken};myId=t.id;
       boot(); return true;
     } else if(s.type==='admin'){
       const d=await sbGet('admins?username=eq.'+encodeURIComponent(s.u)+'&select=*');
@@ -1433,12 +1459,7 @@ async function boot(){
     document.getElementById('btn-next-phase').disabled = !gameActive;
     if(gameActive) updateNextPhaseLabel();
     // Charger les positions au démarrage pour affichage immédiat
-    sbGet('positions?select=*').then(pos=>{
-      if(Array.isArray(pos)){
-        pos.forEach(p=>{const t=teams.find(t=>t.id===p.team_id);if(t){t.lat=p.latitude;t.lng=p.longitude;}});
-        updateTeamMarkers();
-      }
-    }).catch(()=>{});
+
   }
   toast('OK','Connecte','Bienvenue '+CU.name);
 }
@@ -2079,6 +2100,8 @@ async function advanceRound(newR){
     showRoundOverlay(newR);
     outSecs=0;malusIdx=0;wasOut=false;hideZB();
     updatePhase();updateNextPhaseLabel();
+    // Zoom sur la zone active à chaque changement de manche
+    if(game.active_zone) zoomToZone(game.active_zone);
     // Reset le flag picker pour la nouvelle manche
     szPickerTriggered[newR]=false;
     // Réinitialiser le guard timeout picker pour la prochaine phase picker
@@ -2167,22 +2190,7 @@ function startPolling(){
       window._bgPollCount=0;
     }
     try{
-      // Positions : seulement l'admin les lit, toutes les 15 secondes
-      // Les joueurs ne lisent jamais les positions des autres (sauf révélation M4)
-      if(CU.type==='admin'){
-        const now = Date.now();
-        if(!window._lastAdminPosRead || now - window._lastAdminPosRead >= 15000){
-          window._lastAdminPosRead = now;
-          const pos=await sbGet('positions?select=*');
-          if(Array.isArray(pos)){
-            pos.forEach(p=>{
-              const t=teams.find(t=>t.id===p.team_id);
-              if(t){t.lat=p.latitude;t.lng=p.longitude;}
-            });
-            updateTeamMarkers();
-          }
-        }
-      }
+
 
       const ft=await sbGet('teams?select=*&order=name');
       if(Array.isArray(ft)){ft.forEach(ft=>{const t=teams.find(t=>t.id===ft.id);if(t){t.status=ft.status;t.role=ft.role;t.score=ft.score;t.badges=ft.badges;}});buildTeams();updateCount();}
@@ -2241,6 +2249,8 @@ function startPolling(){
             // Mettre lastMinuteScored aux minutes déjà écoulées (évite les points en double)
             lastMinuteScored = Math.floor((TOTAL_SECS + extraSeconds - getGlobalSecs()) / 60);
             szPickerTriggered[game.current_round]=false;
+            // Zoom sur la zone à chaque changement de manche
+            if(game.active_zone) zoomToZone(game.active_zone);
           }
           updatePhase();
         }
@@ -2260,12 +2270,12 @@ async function refreshScores(){
   const max=sorted.reduce((m,t)=>Math.max(m,t.score||0),1);
   document.getElementById('score-sub').textContent=game?'Partie '+game.game_number+' - Manche '+game.current_round:'En attente';
   document.getElementById('score-list').innerHTML=sorted.map((t,i)=>{
-    // Afficher le score seulement si : pas de partie active OU équipe éliminée
-    const showScore = !gameActive || t.status==='eliminated';
-    const scoreDisplay = showScore ? (t.score||0) : '—';
-    const barWidth = showScore && max>0 ? Math.round((t.score||0)/max*100) : 0;
+    // Afficher le score total accumulé pour toutes les équipes, tout le temps
+    // Pendant une partie : les chassés actifs affichent leur score (visible = normal)
+    const scoreDisplay = t.score||0;
+    const barWidth = max>0 ? Math.round((t.score||0)/max*100) : 0;
     return `<div class="srow">
-      <div class="srank ${i===0&&showScore?'gold':''}">${i===0&&showScore?'#1':i+1}</div>
+      <div class="srank ${i===0?'gold':''}">${i===0?'#1':i+1}</div>
       <div style="flex:1">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <div style="width:8px;height:8px;border-radius:50%;background:${t.color};flex-shrink:0"></div>
@@ -3232,7 +3242,12 @@ async function adminForceDisconnect(){
       event_.session_token = newToken;
     }
 
-    // 3. Message radio pour informer
+    // 3. Effacer tous les device_tokens
+    for(const t of teams){
+      await sbPatch('teams?id=eq.'+t.id, {device_token: null}).catch(()=>{});
+      t.device_token = null;
+    }
+    // 4. Message radio pour informer
     await sbPost('messages',{type:'alert',
       content:'⛔ Admin — Toutes les sessions ont été révoquées. Reconnectez-vous.',
       game_id:game?.id});
@@ -3279,7 +3294,7 @@ async function confirmReset(){
     }
     // 2. Remettre toutes les equipes a zero
     for(const t of teams){
-      await sbPatch('teams?id=eq.'+t.id,{score:0,status:'active',role:'chasse',badges:[],total_distance:0});
+      await sbPatch('teams?id=eq.'+t.id,{score:0,status:'active',role:'chasse',badges:[],total_distance:0,device_token:null});
       t.score=0;t.status='active';t.role='chasse';t.badges=[];t.total_distance=0;
     }
     // 3. Vider les messages de la radio et les positions GPS
