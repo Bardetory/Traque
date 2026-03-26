@@ -1448,20 +1448,7 @@ async function boot(){
     if(gameActive) updateNextPhaseLabel();
     // Charger les positions au démarrage pour affichage immédiat
     sbGet('positions?select=*&order=connected_at.asc').then(pos=>{
-      if(Array.isArray(pos)){
-        const byTeam = {};
-        pos.forEach(p=>{ if(!byTeam[p.team_id]) byTeam[p.team_id]=[]; byTeam[p.team_id].push(p); });
-        Object.entries(byTeam).forEach(([teamId,sessions])=>{
-          const t=teams.find(t=>t.id===teamId); if(!t) return;
-          const activeGps=sessions.filter(s=>s.is_active&&s.has_gps&&s.latitude);
-          if(activeGps.length){t.lat=activeGps[0].latitude;t.lng=activeGps[0].longitude;return;}
-          const active=sessions.filter(s=>s.is_active&&s.latitude);
-          if(active.length){t.lat=active[0].latitude;t.lng=active[0].longitude;return;}
-          const any=sessions.filter(s=>s.latitude).sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
-          if(any.length){t.lat=any[0].latitude;t.lng=any[0].longitude;}
-        });
-        updateTeamMarkers();
-      }
+      if(Array.isArray(pos)) applyPositionPriority(pos);
     }).catch(()=>{});
   }
   toast('OK','Connecte','Bienvenue '+CU.name);
@@ -1662,24 +1649,19 @@ function applyPositionPriority(positions){
     const t = teams.find(t => t.id === teamId);
     if(!t) return;
 
-    // Priorité 1 : sessions actives avec GPS, triées par connected_at (plus ancien = prioritaire)
-    const activeWithGps = rows.filter(r => r.is_active && r.has_gps);
+    // Priorité 1 : sessions actives avec GPS (connected_at.asc = plus ancienne en premier)
+    const activeWithGps = rows.filter(r => r.is_active && r.has_gps && r.latitude != null);
     if(activeWithGps.length > 0){
-      // Prendre la plus ancienne (déjà triée par connected_at.asc)
-      const best = activeWithGps[0];
-      if(best.latitude !== 0 || best.longitude !== 0){
-        t.lat = best.latitude;
-        t.lng = best.longitude;
-        return;
-      }
+      t.lat = activeWithGps[0].latitude;
+      t.lng = activeWithGps[0].longitude;
+      return;
     }
 
-    // Priorité 2 : sessions actives sans GPS (connectées mais GPS perdu)
-    // → ne pas mettre à jour, garder la dernière position connue
+    // Priorité 2 : sessions actives sans GPS → garder dernière position connue
+    // (ne pas écraser avec null)
 
-    // Priorité 3 : dernière position connue parmi toutes les sessions
-    // (triées par updated_at desc pour avoir la plus récente)
-    const withPos = rows.filter(r => r.latitude !== 0 || r.longitude !== 0);
+    // Priorité 3 : dernière position connue toutes sessions
+    const withPos = rows.filter(r => r.latitude != null);
     if(withPos.length > 0){
       withPos.sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at));
       t.lat = withPos[0].latitude;
@@ -2209,17 +2191,7 @@ async function showAllPositions15s(){
   // Lire les positions depuis Supabase pour avoir les données à jour
   try{
     const pos = await sbGet('positions?select=*&order=connected_at.asc');
-    if(Array.isArray(pos)){
-      const byTeam={};
-      pos.forEach(p=>{if(!byTeam[p.team_id])byTeam[p.team_id]=[];byTeam[p.team_id].push(p);});
-      Object.entries(byTeam).forEach(([teamId,sessions])=>{
-        const t=teams.find(t=>t.id===teamId);if(!t)return;
-        const activeGps=sessions.filter(s=>s.is_active&&s.has_gps&&s.latitude);
-        if(activeGps.length){t.lat=activeGps[0].latitude;t.lng=activeGps[0].longitude;return;}
-        const any=sessions.filter(s=>s.latitude).sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
-        if(any.length){t.lat=any[0].latitude;t.lng=any[0].longitude;}
-      });
-    }
+    if(Array.isArray(pos)) applyPositionPriority(pos);
   }catch(e){}
   const tempMarkers=[];
   teams.forEach(t=>{
@@ -2286,38 +2258,7 @@ function startPolling(){
           window._lastAdminPosRead = now;
           const pos=await sbGet('positions?select=*&order=connected_at.asc');
           if(Array.isArray(pos)){
-            // Pour chaque équipe : choisir la meilleure position selon priorité
-            // 1. Session active avec GPS → la plus ancienne (connected_at le plus petit)
-            // 2. Session active sans GPS → la plus ancienne
-            // 3. Aucune session active → dernière position connue (updated_at le plus grand)
-            const byTeam = {};
-            pos.forEach(p=>{
-              if(!byTeam[p.team_id]) byTeam[p.team_id] = [];
-              byTeam[p.team_id].push(p);
-            });
-            Object.entries(byTeam).forEach(([teamId, sessions])=>{
-              const t = teams.find(t=>t.id===teamId);
-              if(!t) return;
-              // Priorité 1 : sessions actives avec GPS (déjà triées par connected_at asc)
-              const activeWithGps = sessions.filter(s=>s.is_active && s.has_gps && s.latitude);
-              if(activeWithGps.length > 0){
-                t.lat=activeWithGps[0].latitude; t.lng=activeWithGps[0].longitude;
-                return;
-              }
-              // Priorité 2 : sessions actives sans GPS
-              const activeNoGps = sessions.filter(s=>s.is_active && s.latitude);
-              if(activeNoGps.length > 0){
-                t.lat=activeNoGps[0].latitude; t.lng=activeNoGps[0].longitude;
-                return;
-              }
-              // Priorité 3 : dernière position connue (toutes sessions)
-              const withPos = sessions.filter(s=>s.latitude).sort((a,b)=>
-                new Date(b.updated_at)-new Date(a.updated_at));
-              if(withPos.length > 0){
-                t.lat=withPos[0].latitude; t.lng=withPos[0].longitude;
-              }
-            });
-            updateTeamMarkers();
+            applyPositionPriority(pos);
           }
         }
       }
