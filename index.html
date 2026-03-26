@@ -1254,6 +1254,7 @@ let pendingFoundBy=null; // team id of hunter who found us
 let lastMinuteScored=0; // track last minute we gave points
 let mySessionId=null;   // identifiant unique de cette session
 let mySessionRowId=null; // id de la ligne positions dans Supabase
+let myGpsIsPrimary=true; // cette session est-elle la prioritaire pour l'affichage ?
 function pip(lat,lng,poly){
   if(!poly||poly.length<3)return true;
   let inside=false;const x=lng,y=lat;
@@ -1706,11 +1707,7 @@ function startGPS(){
     showGPSBanner(false);
     myLat=pos.coords.latitude;myLng=pos.coords.longitude;
     // Mise à jour visuelle immédiate
-    // Couleur : vert normal si session prioritaire, gris si secondaire
-    const isPrimary = !myGpsIsPrimary || myGpsIsPrimary === true;
-    const markerColor = isPrimary ? CU.color : '#888888';
-    const markerGlow = isPrimary ? ('0 0 14px '+CU.color+'cc') : 'none';
-    const iconHtml='<div style="width:16px;height:16px;background:'+markerColor+';border:2px solid #0d1f0f;border-radius:50%;box-shadow:'+markerGlow+'"></div>';
+    const iconHtml='<div style="width:16px;height:16px;background:'+CU.color+';border:2px solid #0d1f0f;border-radius:50%;box-shadow:0 0 14px '+CU.color+'cc"></div>';
     const icon=L.divIcon({className:'',html:iconHtml,iconSize:[16,16],iconAnchor:[8,8]});
     if(myMarker)leafMap.removeLayer(myMarker);
     myMarker=L.marker([myLat,myLng],{icon,zIndexOffset:1000}).addTo(leafMap);
