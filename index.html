@@ -1136,6 +1136,11 @@ html,body{height:100%;overflow:hidden;background:var(--forest);color:var(--text)
       <div class="asectitle">Visibilite</div>
       <button class="abtn" onclick="adminToggleCount()"><span id="tc-lbl">Masquer nb equipes</span></button>
     </div>
+    <div class="asec">
+      <div class="asectitle">Point d interet</div>
+      <button class="abtn ok" id="btn-place-marker" onclick="adminStartPlaceMarker()"><span class="ai">📍</span> Placer un point</button>
+      <button class="abtn danger" id="btn-remove-marker" onclick="adminRemoveMarker()" style="display:none"><span class="ai">✖</span> Supprimer le point</button>
+    </div>
 
     <div class="asec" id="admin-sz-edit-sec" style="display:none">
       <div class="asectitle">Modifier sous-zones actives</div>
@@ -1267,12 +1272,14 @@ function isInZone(lat,lng){
   const r=game.current_round||0;
   // M1 : aucun malus
   if(r<2) return true;
-  // Récupérer les sous-zones actives
-  const activeSZids=(game.active_subzone||'').split(',').filter(Boolean);
-  // S'il n'y a pas de sous-zones définies, utiliser la limite globale
-  if(!activeSZids.length) return pip(lat,lng,LIMITE_POLY);
-  // Le joueur est dans la zone s'il est dans AU MOINS UNE des sous-zones actives
-  for(const zid of activeSZids){
+  // M2 : zone globale (les sous-zones ne sont pas encore actives)
+  if(r===2) return pip(lat,lng,LIMITE_POLY);
+  // M3 et M4 : sous-zones actives choisies par les chasseurs
+  const szIds=(game.active_subzone||'').split(',').filter(Boolean);
+  // Fallback : si pas de sous-zones définies, zone globale
+  if(!szIds.length) return pip(lat,lng,LIMITE_POLY);
+  // Utiliser ZONE_POLYS (précis) pour le calcul de collision
+  for(const zid of szIds){
     const zone=ZONE_POLYS.find(z=>z.id===zid);
     if(zone&&pip(lat,lng,zone.coords)) return true;
   }
@@ -1310,19 +1317,22 @@ function logout(){
   if(gpsId){navigator.geolocation.clearWatch(gpsId);gpsId=null;}
   if(timerInt){clearInterval(timerInt);timerInt=null;}
   if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
-  if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+  scoreInt=null;
   // Réinitialiser toutes les variables de session
   CU=null;myId=null;game=null;
   lastMinuteScored=0;
   outSecs=0;malusIdx=0;wasOut=false;
   myLat=null;myLng=null;
   szPickerTriggered={2:false,3:false};
+  _survivalAwarded.clear();
   szPickerOpen=false;
   pendingFoundBy=null;
   lastPositionSent=0;
   extraSeconds=0;
   unreadCount=0;lastSeenMsgId=null;
   selfReportModal=false;
+  if(compassMarker&&leafMap){leafMap.removeLayer(compassMarker);compassMarker=null;}
+  if(adminMapMarker&&leafMap){leafMap.removeLayer(adminMapMarker);adminMapMarker=null;}
   if(myMarker&&leafMap){leafMap.removeLayer(myMarker);myMarker=null;}
   if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
   // Effacer le device_token pour permettre une nouvelle connexion
@@ -1455,7 +1465,7 @@ async function boot(){
   document.getElementById('app').style.display='flex';
   setupTopbar();initMap();buildTeams();buildBadges();
   await refreshScores();await refreshChat();
-  updatePhase();startTimer();startGPS();startPolling();
+  updatePhase();startTimer();startGPS();startCompass();startPolling();
   if(CU.type==='admin'){
     buildAdminSelects();
     // Réactiver les boutons si une partie est déjà en cours
@@ -1569,9 +1579,32 @@ function showActiveSubzones(){
   if(!ids.length)return;
   const lg=L.layerGroup().addTo(leafMap);
   ids.forEach(zid=>{
-    // Utiliser ZONE_POLYS_VISUAL (esthétique) et non ZONE_POLYS (technique)
     const zp=ZONE_POLYS_VISUAL.find(z=>z.id===zid);
-    if(zp)L.geoJSON({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[zp.coords]}},{style:{color:'rgba(255,184,48,1)',weight:3,dashArray:'8 4',fillColor:'rgba(255,184,48,0.18)',fillOpacity:1}}).addTo(lg);
+    if(!zp) return;
+    const layer = L.geoJSON({type:'Feature',properties:{id:zid},geometry:{type:'Polygon',coordinates:[zp.coords]}},{
+      style:{color:'rgba(255,184,48,1)',weight:3,dashArray:'8 4',fillColor:'rgba(255,184,48,0.18)',fillOpacity:1},
+      // Rendre cliquable si picker ouvert (chasseurs choisissent la sous-zone à supprimer)
+      onEachFeature:(feature,layer)=>{
+        layer.on('click',()=>{
+          if(szPickerOpen){
+            // Sélectionner cette sous-zone dans le picker
+            document.querySelectorAll('.szp-zone-btn').forEach(b=>{
+              b.classList.toggle('sel', b.dataset.szid===zid);
+            });
+            szPickerSelected = zid;
+            document.getElementById('szp-confirm-btn').disabled = false;
+            // Feedback visuel sur la carte
+            lg.eachLayer(l=>{
+              if(l.feature?.properties?.id===zid){
+                l.setStyle({color:'rgba(239,68,68,1)',fillColor:'rgba(239,68,68,0.25)'});
+              } else {
+                l.setStyle({color:'rgba(255,184,48,1)',fillColor:'rgba(255,184,48,0.18)'});
+              }
+            });
+          }
+        });
+      }
+    }).addTo(lg);
   });
   mapLayers.activeSubzoneLayer=lg;
 }
@@ -1647,6 +1680,10 @@ function showGPSBanner(show, msg){
 }
 
 let lastPositionSent = 0; // timestamp du dernier envoi Supabase
+let compassHeading = null; // cap de direction en degrés
+let compassMarker = null;  // marqueur flèche sur la carte
+let adminMapMarker = null; // marqueur point d'intérêt admin
+let adminPlacingMarker = false; // mode placement actif
 
 function startGPS(){
   if(CU.type==='admin') return;
@@ -1666,6 +1703,7 @@ function startGPS(){
     if(myAccCircle)leafMap.removeLayer(myAccCircle);
     if(pos.coords.accuracy<80)myAccCircle=L.circle([myLat,myLng],{radius:pos.coords.accuracy,color:'rgba(127,255,79,0.4)',fillColor:'rgba(127,255,79,0.05)',fillOpacity:1,weight:1}).addTo(leafMap);
     const t=teams.find(t=>t.id===myId);if(t){t.lat=myLat;t.lng=myLng;}
+    if(compassHeading!=null) updateCompassMarker();
     recordPosition(myId, myLat, myLng);
     // Envoi Supabase : toutes les 15 secondes max
     // Envoyer la position à Supabase (15s actif, 30s arrière-plan)
@@ -1692,38 +1730,100 @@ function startGPS(){
   },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 }
 
-// ══ SCORE ENGINE ══════════════════════════════
-function startScoreEngine(){
-  if(scoreInt) return; // déjà en cours pour cette partie — ne pas relancer
-  // Caler lastMinuteScored sur les minutes déjà écoulées pour éviter
-  // de donner des points rétroactifs pour le temps passé avant M2
-  const gs = getGlobalSecs();
-  const elapsed = Math.floor((TOTAL_SECS + extraSeconds - gs) / 60);
-  lastMinuteScored = Math.max(lastMinuteScored, elapsed);
-  scoreInt=setInterval(async()=>{
-    if(!game||game.status!=='active'||CU.type==='admin')return;
-    const r=game.current_round||0;
-    if(r<2)return; // no scoring in round 1
-    const myTeam=teams.find(t=>t.id===myId);
-    if(!myTeam||myTeam.status==='eliminated')return;
+// ══ BOUSSOLE ═════════════════════════════════
+function startCompass(){
+  if(CU.type==='admin') return;
+  // DeviceOrientationEvent — demander permission sur iOS
+  if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+    // iOS 13+ : demander la permission au premier clic
+    document.addEventListener('click', function askCompass(){
+      DeviceOrientationEvent.requestPermission().then(state=>{
+        if(state==='granted') listenCompass();
+      }).catch(()=>{});
+      document.removeEventListener('click', askCompass);
+    }, {once:true});
+  } else {
+    listenCompass();
+  }
+}
 
-    // Chassés: +30 pts par minute complète non trouvée (SCORE_CHASSE_PER_MIN)
-    if(myTeam.role==='chasse'){
-      if(!game.started_at) return;
-      // Calcul basé sur le chrono global : minutes écoulées depuis le début de la partie
-      const gs = getGlobalSecs();
-      const totalElapsed = Math.floor(TOTAL_SECS + extraSeconds - gs); // secondes écoulées
-      const minutesDone = Math.floor(totalElapsed / 60);
-      incrementHiddenTime(myId);
-      if(minutesDone > lastMinuteScored){
-        const newMins = minutesDone - lastMinuteScored;
-        lastMinuteScored = minutesDone;
-        const pts = newMins * SCORE_CHASSE_PER_MIN;
-        await addScore(myId, pts, 'Survie ('+newMins+' min)');
-        showScoreNotif('+'+pts, 'Survie !');
-      }
-    }
-  },10000); // check every 10s
+function listenCompass(){
+  window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+  window.addEventListener('deviceorientation', handleOrientation, true);
+}
+
+function handleOrientation(e){
+  // webkitCompassHeading : iOS (cap magnétique direct)
+  // alpha avec absolute=true : Android (cap absolu)
+  let heading = null;
+  if(e.webkitCompassHeading != null){
+    heading = e.webkitCompassHeading;
+  } else if(e.absolute && e.alpha != null){
+    heading = (360 - e.alpha) % 360;
+  } else if(e.alpha != null){
+    heading = (360 - e.alpha) % 360;
+  }
+  if(heading == null) return;
+  compassHeading = heading;
+  updateCompassMarker();
+}
+
+function updateCompassMarker(){
+  if(!leafMap || myLat == null || myLng == null || compassHeading == null) return;
+  // Créer ou mettre à jour le marqueur flèche
+  // Flèche centrée sur le marqueur GPS, rotation autour du centre
+  const arrowHtml = `<div style="display:flex;align-items:center;justify-content:center;width:20px;height:20px;transform:rotate(${compassHeading}deg)"><div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:14px solid ${CU.color};filter:drop-shadow(0 0 3px ${CU.color}aa)"></div></div>`;
+  const icon = L.divIcon({className:'',html:arrowHtml,iconSize:[20,20],iconAnchor:[10,10]});
+  if(compassMarker){
+    compassMarker.setLatLng([myLat,myLng]);
+    compassMarker.setIcon(icon);
+  } else {
+    compassMarker = L.marker([myLat,myLng],{icon,zIndexOffset:1001,interactive:false}).addTo(leafMap);
+  }
+}
+
+// ══ SCORE ENGINE ══════════════════════════════
+// Les points de survie sont calculés et attribués en une seule fois
+// au moment où l'équipe est éliminée ou à la fin de la partie.
+// Formule : minutes écoulées depuis le début de M2 × 30 pts/min
+
+function calcSurvivalMinutes(){
+  // Minutes de survie = temps écoulé depuis le début de M2 jusqu'à maintenant
+  // M2 commence quand gs = 1800 (30:00 restantes)
+  // Donc secondes depuis M2 = 1800 - gs_actuel (plafonné à 0 si on n'est pas encore en M2)
+  if(!game || !game.started_at) return 0;
+  const r = game.current_round || 0;
+  if(r < 2) return 0; // pas encore en M2, aucun point
+  const gs = Math.max(0, getGlobalSecs());
+  // gs = 1800 → début M2 → 0 secondes écoulées
+  // gs = 1740 → 1 minute écoulée depuis M2
+  // gs = 0    → 30 minutes écoulées depuis M2
+  const secsElapsed = Math.max(0, ROUND_GS_END[1] - gs);
+  return Math.floor(secsElapsed / 60);
+}
+
+// Guard anti-double-attribution des points de survie
+const _survivalAwarded = new Set();
+
+async function awardSurvivalPoints(teamId, reason){
+  // Attribuer les points de survie à une équipe chassée — une seule fois par équipe
+  if(_survivalAwarded.has(teamId)) return; // déjà attribué
+  if(!game || !game.started_at) return;
+  const mins = calcSurvivalMinutes();
+  if(mins <= 0) return;
+  _survivalAwarded.add(teamId); // marquer immédiatement pour bloquer tout doublon
+  const pts = mins * SCORE_CHASSE_PER_MIN;
+  const t = teams.find(t => t.id === teamId);
+  if(!t) return;
+  incrementHiddenTime(teamId);
+  await addScore(teamId, pts, reason || 'Survie ('+mins+' min)');
+  showScoreNotif('+'+pts, 'Survie '+mins+' min !');
+}
+
+function startScoreEngine(){
+  // Score engine simplifié : ne fait rien côté client
+  // Les points sont attribués en une fois à l'élimination ou en fin de partie
+  scoreInt = true; // flag pour indiquer que le système est actif
 }
 
 async function addScore(teamId,pts,reason){
@@ -1783,12 +1883,14 @@ async function confirmSelfReport(){
   closeSelfReport();
   const r = game.current_round || 0;
   try{
+    // Attribuer les points de survie AVANT d'éliminer
+    await awardSurvivalPoints(myId, 'Survie jusqu\'a elimination ('+calcSurvivalMinutes()+' min)');
     // Marquer l'équipe comme éliminée
     await sbPatch('teams?id=eq.'+myId, {status:'eliminated'});
     myTeam.status = 'eliminated';
-    // Arrêter le score engine et le zone check
+    // Arrêter le zone check
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
-    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    scoreInt=null;
     lastMinuteScored=0;
     hideZB();
     // Donner les points aux chasseurs
@@ -1871,6 +1973,8 @@ async function confirmFound(){
   const pts=SCORE_HUNTER[r]||0;
   recordDiscovery(pendingFoundBy);
   try{
+    // Attribuer les points de survie AVANT d'éliminer
+    await awardSurvivalPoints(myId, 'Survie jusqu\'a elimination ('+calcSurvivalMinutes()+' min)');
     // Eliminate prey
     await sbPatch('teams?id=eq.'+myId,{status:'eliminated'});
     const myTeam=teams.find(t=>t.id===myId);if(myTeam)myTeam.status='eliminated';
@@ -1894,7 +1998,7 @@ async function confirmFound(){
     await sbPost('messages',{type:'alert',content:myTeam?.name+' eliminee par '+teams.find(t=>t.id===pendingFoundBy)?.name+' (Manche '+r+' — +'+pts+' pts chasseurs)',game_id:game.id});
     toast('X','Elimine','Votre equipe est eliminee. +'+pts+' pts aux chasseurs.');
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
-    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    scoreInt=null;
     lastMinuteScored=0;
     hideZB();buildTeams();
   }catch(e){toast('X','Erreur',''+e.message);}
@@ -1909,11 +2013,21 @@ function denyFound(){
 
 // Fin de partie: bonus chassés jamais trouvés
 async function applyEndBonuses(){
-  // Bonus "jamais trouvé" uniquement aux équipes qui ont été connectées
-  // (ont au moins une session dans positions, active ou non)
+  // 1. Points de survie pour toutes les équipes chassées encore actives
+  const survivors = teams.filter(t => t.role==='chasse' && t.status==='active');
+  const mins = calcSurvivalMinutes();
+  for(const t of survivors){
+    if(mins > 0){
+      const pts = mins * SCORE_CHASSE_PER_MIN;
+      await addScore(t.id, pts, 'Survie fin de partie ('+mins+' min)');
+    }
+    // 2. Bonus jamais trouvé pour les équipes connectées (ont une position GPS)
+    incrementHiddenTime(t.id);
+  }
+  // Bonus jamais trouvé uniquement aux équipes qui ont été connectées
   const posData = await sbGet('positions?select=team_id');
   const connectedIds = new Set(Array.isArray(posData) ? posData.map(p=>p.team_id) : []);
-  const neverFound = teams.filter(t=>t.role==='chasse' && t.status==='active' && connectedIds.has(t.id));
+  const neverFound = survivors.filter(t => connectedIds.has(t.id));
   for(const t of neverFound){
     await addScore(t.id, SCORE_CHASSE_BONUS, 'Bonus jamais trouve !');
     await sbPost('messages',{type:'announce',content:t.name+' n\'a jamais ete trouvee ! Bonus +'+SCORE_CHASSE_BONUS+' pts',game_id:game?.id});
@@ -1978,7 +2092,7 @@ async function autoElim(){
     if(navigator.vibrate)navigator.vibrate([300,100,300,100,300]);
     hideZB();
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
-    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    scoreInt=null;
     lastMinuteScored=0;
   }catch(e){}
 }
@@ -2230,6 +2344,7 @@ function startPolling(){
           }
           if(!wasA&&game){
             szPickerTriggered={2:false,3:false};
+            _survivalAwarded.clear(); // réinitialiser le guard de survie
             game._stop=false; // réinitialiser le guard de fin de partie
             scoreInt=null;    // forcer le redémarrage du score engine
             toast('!','Partie','La partie a commence!');
@@ -2256,6 +2371,22 @@ function startPolling(){
             szPickerTriggered[game.current_round]=false;
             // Zoom sur la zone à chaque changement de manche
             if(game.active_zone) zoomToZone(game.active_zone);
+          }
+          // Afficher/mettre à jour le point admin si présent
+          if(game){
+            const mlat = game.admin_marker_lat;
+            const mlng = game.admin_marker_lng;
+            const hasMarker = mlat!=null && mlng!=null;
+            const markerVisible = adminMapMarker!=null;
+            if(hasMarker && (!markerVisible || adminMapMarker._latlng.lat!==mlat)){
+              showAdminMarker(mlat, mlng);
+            } else if(!hasMarker && markerVisible){
+              leafMap.removeLayer(adminMapMarker); adminMapMarker=null;
+              if(CU.type==='admin'){
+                document.getElementById('btn-remove-marker').style.display='none';
+                document.getElementById('btn-place-marker').style.display='block';
+              }
+            }
           }
           updatePhase();
         }
@@ -2858,6 +2989,7 @@ function openSZPicker(){
     const zone = ZONE_POLYS.find(z => z.id === szId);
     const btn = document.createElement('div');
     btn.className = 'szp-zone-btn';
+    btn.dataset.szid = szId;
     btn.textContent = zone ? zone.name : szId;
     btn.addEventListener('click', () => {
       document.querySelectorAll('.szp-zone-btn').forEach(b => b.classList.remove('sel'));
@@ -2887,6 +3019,8 @@ function openSZPicker(){
 
   document.getElementById('sz-picker-modal').style.display = 'flex';
   updateNextPhaseLabel();
+  // Rafraîchir les zones sur la carte pour activer la cliquabilité
+  showActiveSubzones();
 }
 
 function renderSZTimer(secs){
@@ -3098,7 +3232,7 @@ async function adminStartGame(){
       await sbPatch('teams?id=eq.'+t.id,{status:'active',role:'chasse'});
       t.status='active';t.role='chasse';
     }
-    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);lastMinuteScored=0;extraSeconds=0;szPickerTriggered={2:false,3:false};updatePhase();startZoneCheck();startScoreEngine();
+    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);lastMinuteScored=0;extraSeconds=0;szPickerTriggered={2:false,3:false};_survivalAwarded.clear();updatePhase();startZoneCheck();startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
     document.getElementById('btn-next-phase').disabled=false;
     updateNextPhaseLabel();
@@ -3121,7 +3255,7 @@ async function autoStopGame(){
     await sbPost('messages',{type:'announce',content:'Partie terminee ! Consultez le classement final.',game_id:game.id});
     game.status='finished';
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
-    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    scoreInt=null;
     lastMinuteScored=0;
     hideZB();
     if(leafMap && mapLayers.activeSubzoneLayer){
@@ -3131,6 +3265,55 @@ async function autoStopGame(){
     activateAllZonesByDefault();
     updatePhase();updateZoneColors();
   }catch(e){}
+}
+
+// ══ POINT D'INTÉRÊT ADMIN ════════════════════════════════════════
+function adminStartPlaceMarker(){
+  adminPlacingMarker = true;
+  closeDrawer('admin');
+  toast('📍','Point','Appuyez sur la carte pour placer le point');
+  leafMap.once('click', async (e)=>{
+    adminPlacingMarker = false;
+    const {lat,lng} = e.latlng;
+    try{
+      if(game){
+        await sbPatch('games?id=eq.'+game.id, {admin_marker_lat:lat, admin_marker_lng:lng});
+        game.admin_marker_lat=lat; game.admin_marker_lng=lng;
+      }
+      showAdminMarker(lat, lng);
+      toast('📍','Point','Point place !');
+    }catch(e){ toast('X','Erreur',''+e.message); }
+  });
+}
+
+async function adminRemoveMarker(){
+  try{
+    if(game){
+      await sbPatch('games?id=eq.'+game.id, {admin_marker_lat:null, admin_marker_lng:null});
+      game.admin_marker_lat=null; game.admin_marker_lng=null;
+    }
+    if(adminMapMarker&&leafMap){ leafMap.removeLayer(adminMapMarker); adminMapMarker=null; }
+    document.getElementById('btn-remove-marker').style.display='none';
+    document.getElementById('btn-place-marker').style.display='block';
+    toast('✖','Point','Point supprime');
+    closeDrawer('admin');
+  }catch(e){ toast('X','Erreur',''+e.message); }
+}
+
+function showAdminMarker(lat, lng){
+  if(adminMapMarker&&leafMap){ leafMap.removeLayer(adminMapMarker); adminMapMarker=null; }
+  if(lat==null||lng==null) return;
+  const icon = L.divIcon({
+    className:'',
+    html:'<div style="width:22px;height:22px;background:#fff;border:3px solid #ef4444;border-radius:50%;box-shadow:0 0 12px rgba(239,68,68,0.8);display:flex;align-items:center;justify-content:center;font-size:12px">📍</div>',
+    iconSize:[22,22],iconAnchor:[11,11]
+  });
+  adminMapMarker = L.marker([lat,lng],{icon,zIndexOffset:999,interactive:false}).addTo(leafMap);
+  // Afficher le bouton supprimer (admin seulement)
+  if(CU.type==='admin'){
+    document.getElementById('btn-remove-marker').style.display='block';
+    document.getElementById('btn-place-marker').style.display='none';
+  }
 }
 
 async function adminStopGame(){
@@ -3144,7 +3327,7 @@ async function adminStopGame(){
     await sbPost('messages',{type:'announce',content:'Partie terminee ! Consultez le classement final.',game_id:game.id});
     game.status='finished';
     if(zoneInt){clearInterval(zoneInt);zoneInt=null;}
-    if(scoreInt){clearInterval(scoreInt);scoreInt=null;}
+    scoreInt=null;
     hideZB();toast('[]','Partie','Terminee');document.getElementById('btn-stop').disabled=true;document.getElementById('btn-next-phase').disabled=true;
     // Supprimer le surlignage des sous-zones actives
     if(leafMap && mapLayers.activeSubzoneLayer){
@@ -3292,6 +3475,7 @@ async function confirmReset(){
       await sbPatch('games?id=eq.'+game.id,{status:'finished',finished_at:new Date().toISOString()});
     }
     game=null;
+    if(adminMapMarker&&leafMap){leafMap.removeLayer(adminMapMarker);adminMapMarker=null;}
     // Remettre le compteur de parties à 0 pour que la prochaine soit "Partie 1"
     if(event_){
       await sbPatch('events?id=eq.'+event_.id,{current_game:0});
@@ -3325,6 +3509,17 @@ async function adminEliminate(){
   try{
     const prey=teams.find(t=>t.id===tid);
     if(!prey){toast('!','Admin','Equipe introuvable');return;}
+    // Attribuer les points de survie avant d'éliminer
+    if(game && game.status==='active' && prey.role==='chasse'){
+      const mins = calcSurvivalMinutes();
+      if(mins > 0){
+        const survPts = mins * SCORE_CHASSE_PER_MIN;
+        const ns = (prey.score||0)+survPts;
+        await sbPatch('teams?id=eq.'+tid,{score:ns});
+        await sbPost('scores',{team_id:tid,game_id:game.id,points:survPts,reason:'Survie ('+mins+' min)'});
+        prey.score=ns;
+      }
+    }
     await sbPatch('teams?id=eq.'+tid,{status:'eliminated'});
     prey.status='eliminated';
     const r=game?.current_round||0;
