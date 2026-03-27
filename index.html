@@ -2099,37 +2099,23 @@ function showZB(pts,g){
 }
 function hideZB(){document.getElementById('zone-banner').style.display='none';}
 
-function applyMalus(pts){
-  // Accumuler le malus localement
+async function applyMalus(pts){
   const t=teams.find(t=>t.id===myId);if(!t)return;
-  pendingMalus += pts;
-  // Mettre à jour le score local immédiatement (affichage réactif)
+  // Mettre à jour le score local immédiatement pour l'affichage
   t.score = Math.max(0, (t.score||0) - pts);
   buildTeams();
   showScoreNotif('-'+pts, 'Hors zone');
-  // Démarrer le timer de flush si pas déjà actif
-  if(!malusFlushTimer){
-    malusFlushTimer = setTimeout(()=>{ flushMalus(); }, 30000);
-  }
+  // Écrire directement dans Supabase — simple et fiable
+  try{
+    await sbPatch('teams?id=eq.'+myId,{score:t.score});
+    await sbPost('scores',{team_id:myId,game_id:game?.id,points:-pts,reason:'Malus hors zone'});
+  }catch(e){}
 }
 
 async function flushMalus(){
+  // Plus utilisé — malus envoyés immédiatement
   malusFlushTimer = null;
-  if(pendingMalus <= 0) return;
-  const total = pendingMalus;
   pendingMalus = 0;
-  try{
-    const t=teams.find(t=>t.id===myId);if(!t)return;
-    // Utiliser t.score local (déjà mis à jour par applyMalus)
-    // pour éviter la race condition avec awardSurvivalPoints
-    const ns=Math.max(0, t.score||0);
-    await sbPatch('teams?id=eq.'+myId,{score:ns});
-    await sbPost('scores',{team_id:myId,game_id:game?.id,points:-total,reason:'Malus hors zone ('+total+' pts)'});
-    buildTeams();
-  }catch(e){
-    // En cas d'erreur réseau, remettre les malus en attente
-    pendingMalus += total;
-  }
 }
 
 async function forceFlushMalus(){
