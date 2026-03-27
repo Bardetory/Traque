@@ -1257,6 +1257,8 @@ let leafMap=null,myMarker=null,myAccCircle=null,teamMarkers={};
 let mapLayers={chemins:null,eau:null,limite:null,subzone:null};
 let layerVisible={chemins:true,eau:true,limite:false};
 let pendingFoundBy=null; // team id of hunter who found us
+let pendingMalus=0;      // malus accumulés non encore écrits dans Supabase
+let malusFlushTimer=null; // timer d'envoi groupé des malus
 let lastMinuteScored=0; // track last minute we gave points
 
 function pip(lat,lng,poly){
@@ -1327,6 +1329,8 @@ function logout(){
   _survivalAwarded.clear();
   szPickerOpen=false;
   pendingFoundBy=null;
+  pendingMalus=0;
+  if(malusFlushTimer){clearTimeout(malusFlushTimer);malusFlushTimer=null;}
   lastPositionSent=0;
   extraSeconds=0;
   unreadCount=0;lastSeenMsgId=null;
@@ -1466,6 +1470,11 @@ async function boot(){
   setupTopbar();initMap();buildTeams();buildBadges();
   await refreshScores();await refreshChat();
   updatePhase();startTimer();startGPS();startCompass();startPolling();
+  // Si une partie est déjà active au moment de la connexion, démarrer le zone check
+  if(CU.type==='team' && game && game.status==='active'){
+    startZoneCheck();
+    startScoreEngine();
+  }
   if(CU.type==='admin'){
     buildAdminSelects();
     // Réactiver les boutons si une partie est déjà en cours
@@ -1894,6 +1903,8 @@ async function confirmSelfReport(){
   closeSelfReport();
   const r = game.current_round || 0;
   try{
+    // Flush des malus en attente avant élimination
+    await forceFlushMalus();
     // Attribuer les points de survie AVANT d'éliminer
     await awardSurvivalPoints(myId, 'Survie jusqu\'a elimination ('+calcSurvivalMinutes()+' min)');
     // Marquer l'équipe comme éliminée
@@ -1984,6 +1995,8 @@ async function confirmFound(){
   const pts=SCORE_HUNTER[r]||0;
   recordDiscovery(pendingFoundBy);
   try{
+    // Flush des malus en attente avant élimination
+    await forceFlushMalus();
     // Attribuer les points de survie AVANT d'éliminer
     await awardSurvivalPoints(myId, 'Survie jusqu\'a elimination ('+calcSurvivalMinutes()+' min)');
     // Eliminate prey
@@ -2083,17 +2096,49 @@ function showZB(pts,g){
 }
 function hideZB(){document.getElementById('zone-banner').style.display='none';}
 
-async function applyMalus(pts){
-  try{const t=teams.find(t=>t.id===myId);if(!t)return;
-    const ns=Math.max(0,(t.score||0)-pts);
+function applyMalus(pts){
+  // Accumuler le malus localement
+  const t=teams.find(t=>t.id===myId);if(!t)return;
+  pendingMalus += pts;
+  // Mettre à jour le score local immédiatement (affichage réactif)
+  t.score = Math.max(0, (t.score||0) - pts);
+  buildTeams();
+  showScoreNotif('-'+pts, 'Hors zone');
+  // Démarrer le timer de flush si pas déjà actif
+  if(!malusFlushTimer){
+    malusFlushTimer = setTimeout(()=>{ flushMalus(); }, 30000);
+  }
+}
+
+async function flushMalus(){
+  malusFlushTimer = null;
+  if(pendingMalus <= 0) return;
+  const total = pendingMalus;
+  pendingMalus = 0;
+  try{
+    const t=teams.find(t=>t.id===myId);if(!t)return;
+    // Lire le score Supabase pour éviter race condition avec d'autres requêtes
+    const fresh=await sbGet('teams?id=eq.'+myId+'&select=score');
+    const currentScore=(Array.isArray(fresh)&&fresh.length)?fresh[0].score||0:t.score||0;
+    const ns=Math.max(0, currentScore - total);
     await sbPatch('teams?id=eq.'+myId,{score:ns});
-    await sbPost('scores',{team_id:myId,game_id:game?.id,points:-pts,reason:'Malus hors zone'});
-    t.score=ns;buildTeams();showScoreNotif('-'+pts,'Hors zone');
-  }catch(e){}
+    await sbPost('scores',{team_id:myId,game_id:game?.id,points:-total,reason:'Malus hors zone ('+total+' pts)'});
+    t.score=ns;buildTeams();
+  }catch(e){
+    // En cas d'erreur réseau, remettre les malus en attente
+    pendingMalus += total;
+  }
+}
+
+async function forceFlushMalus(){
+  // Flush immédiat (appelé à l'élimination ou fin de partie)
+  if(malusFlushTimer){clearTimeout(malusFlushTimer);malusFlushTimer=null;}
+  await flushMalus();
 }
 
 async function autoElim(){
   try{
+    await forceFlushMalus(); // flush malus avant élimination
     await sbPatch('teams?id=eq.'+myId,{status:'eliminated'});
     // Mettre à jour le statut local immédiatement pour stopper le zone check
     const myTeam = teams.find(t=>t.id===myId);
@@ -2370,8 +2415,11 @@ function startPolling(){
             showRoundOverlay(1);startZoneCheck();startScoreEngine();
             if(game.active_zone) zoomToZone(game.active_zone); // zoom sur la zone
           }
-          // Reconnexion pendant une partie active : vérifier si le picker doit être ouvert
+          // Reconnexion pendant une partie active : relancer le zone check si besoin
           if(game && game.status==='active' && wasA && CU.type==='team'){
+            // Relancer le zone check s'il n'est pas actif (reconnexion en cours de partie)
+            if(!zoneInt) startZoneCheck();
+            if(!scoreInt) startScoreEngine();
             const gsNow = getGlobalSecs();
             const prNow = getPickerRound(gsNow);
             if(prNow > 0 && !szPickerOpen && !szPickerTriggered[prNow]){
@@ -3255,7 +3303,7 @@ async function adminStartGame(){
       await sbPatch('teams?id=eq.'+t.id,{status:'active',role:'chasse'});
       t.status='active';t.role='chasse';
     }
-    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);lastMinuteScored=0;extraSeconds=0;szPickerTriggered={2:false,3:false};_survivalAwarded.clear();updatePhase();startZoneCheck();startScoreEngine();
+    toast('>','Partie','Partie '+gn+' lancee!');showRoundOverlay(1);lastMinuteScored=0;extraSeconds=0;szPickerTriggered={2:false,3:false};_survivalAwarded.clear();pendingMalus=0;if(malusFlushTimer){clearTimeout(malusFlushTimer);malusFlushTimer=null;}updatePhase();startZoneCheck();startScoreEngine();
     document.getElementById('btn-stop').disabled=false;
     document.getElementById('btn-next-phase').disabled=false;
     updateNextPhaseLabel();
