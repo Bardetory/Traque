@@ -1280,7 +1280,8 @@ function isInZone(lat,lng){
   const szIds=(game.active_subzone||'').split(',').filter(Boolean);
   // Fallback : si pas de sous-zones définies, zone globale
   if(!szIds.length) return pip(lat,lng,LIMITE_POLY);
-  // Utiliser ZONE_POLYS (précis) pour le calcul de collision
+  // Utiliser ZONE_POLYS (polygones précis et plus larges que VISUAL)
+  // pour laisser une marge GPS en bordure de zone
   for(const zid of szIds){
     const zone=ZONE_POLYS.find(z=>z.id===zid);
     if(zone&&pip(lat,lng,zone.coords)) return true;
@@ -2066,6 +2067,8 @@ function startZoneCheck(){
     // Les chasseurs ne sont pas soumis aux malus de zone
     const myTeam=teams.find(t=>t.id===myId);
     if(myTeam&&myTeam.role==='chasseur'){hideZB();return;}
+    // Les équipes éliminées ne reçoivent plus de malus
+    if(myTeam&&myTeam.status==='eliminated'){hideZB();return;}
     const r=game.current_round||0;
     if(r===1){hideZB();return;}
     if(myLat==null)return;
