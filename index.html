@@ -2120,13 +2120,12 @@ async function flushMalus(){
   pendingMalus = 0;
   try{
     const t=teams.find(t=>t.id===myId);if(!t)return;
-    // Lire le score Supabase pour éviter race condition avec d'autres requêtes
-    const fresh=await sbGet('teams?id=eq.'+myId+'&select=score');
-    const currentScore=(Array.isArray(fresh)&&fresh.length)?fresh[0].score||0:t.score||0;
-    const ns=Math.max(0, currentScore - total);
+    // Utiliser t.score local (déjà mis à jour par applyMalus)
+    // pour éviter la race condition avec awardSurvivalPoints
+    const ns=Math.max(0, t.score||0);
     await sbPatch('teams?id=eq.'+myId,{score:ns});
     await sbPost('scores',{team_id:myId,game_id:game?.id,points:-total,reason:'Malus hors zone ('+total+' pts)'});
-    t.score=ns;buildTeams();
+    buildTeams();
   }catch(e){
     // En cas d'erreur réseau, remettre les malus en attente
     pendingMalus += total;
