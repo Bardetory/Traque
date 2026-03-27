@@ -1476,6 +1476,10 @@ async function boot(){
     // Charger les positions au démarrage pour affichage immédiat
 
   }
+  // Afficher le point admin s'il est déjà défini dans events
+  if(event_&&event_.admin_marker_lat!=null&&event_.admin_marker_lng!=null){
+    showAdminMarker(event_.admin_marker_lat, event_.admin_marker_lng);
+  }
   toast('OK','Connecte','Bienvenue '+CU.name);
 }
 
@@ -1770,10 +1774,17 @@ function handleOrientation(e){
 
 function updateCompassMarker(){
   if(!leafMap || myLat == null || myLng == null || compassHeading == null) return;
-  // Créer ou mettre à jour le marqueur flèche
-  // Flèche centrée sur le marqueur GPS, rotation autour du centre
-  const arrowHtml = `<div style="display:flex;align-items:center;justify-content:center;width:20px;height:20px;transform:rotate(${compassHeading}deg)"><div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:14px solid ${CU.color};filter:drop-shadow(0 0 3px ${CU.color}aa)"></div></div>`;
-  const icon = L.divIcon({className:'',html:arrowHtml,iconSize:[20,20],iconAnchor:[10,10]});
+  // Style Google Maps : cercle central + cône de direction en SVG
+  const c = CU.color;
+  const h = compassHeading;
+  const toRad = a => a * Math.PI / 180;
+  const cx = 36, cy = 36, r = 30, angle = 50;
+  const x1 = +(cx + r * Math.sin(toRad(h - angle/2))).toFixed(1);
+  const y1 = +(cy - r * Math.cos(toRad(h - angle/2))).toFixed(1);
+  const x2 = +(cx + r * Math.sin(toRad(h + angle/2))).toFixed(1);
+  const y2 = +(cy - r * Math.cos(toRad(h + angle/2))).toFixed(1);
+  const arrowHtml = `<svg width="72" height="72" viewBox="0 0 72 72" style="overflow:visible;pointer-events:none"><defs><radialGradient id="cg${c.replace('#','')}" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="${c}" stop-opacity="0.5"/><stop offset="100%" stop-color="${c}" stop-opacity="0.05"/></radialGradient></defs><path d="M${cx},${cy} L${x1},${y1} A${r},${r} 0 0,1 ${x2},${y2} Z" fill="url(#cg${c.replace('#','')})" stroke="${c}" stroke-width="0.8" stroke-opacity="0.6"/><circle cx="${cx}" cy="${cy}" r="9" fill="${c}" stroke="#fff" stroke-width="2.5"/><circle cx="${cx}" cy="${cy}" r="3.5" fill="#fff" opacity="0.95"/></svg>`;
+  const icon = L.divIcon({className:'',html:arrowHtml,iconSize:[72,72],iconAnchor:[36,36]});
   if(compassMarker){
     compassMarker.setLatLng([myLat,myLng]);
     compassMarker.setIcon(icon);
@@ -2311,6 +2322,14 @@ function startPolling(){
     try{
 
 
+      // Relire event_ pour admin_marker (peut changer sans partie active)
+      if(event_){
+        const evUpd=await sbGet('events?id=eq.'+event_.id+'&select=admin_marker_lat,admin_marker_lng');
+        if(Array.isArray(evUpd)&&evUpd.length){
+          event_.admin_marker_lat=evUpd[0].admin_marker_lat;
+          event_.admin_marker_lng=evUpd[0].admin_marker_lng;
+        }
+      }
       const ft=await sbGet('teams?select=*&order=name');
       if(Array.isArray(ft)){ft.forEach(ft=>{const t=teams.find(t=>t.id===ft.id);if(t){t.status=ft.status;t.role=ft.role;t.score=ft.score;t.badges=ft.badges;}});buildTeams();updateCount();}
       if(event_){
@@ -2372,19 +2391,23 @@ function startPolling(){
             // Zoom sur la zone à chaque changement de manche
             if(game.active_zone) zoomToZone(game.active_zone);
           }
-          // Afficher/mettre à jour le point admin si présent
-          if(game){
-            const mlat = game.admin_marker_lat;
-            const mlng = game.admin_marker_lng;
+          // Afficher/mettre à jour le point admin (lu depuis events, toujours disponible)
+          if(event_){
+            const mlat = event_.admin_marker_lat;
+            const mlng = event_.admin_marker_lng;
             const hasMarker = mlat!=null && mlng!=null;
             const markerVisible = adminMapMarker!=null;
-            if(hasMarker && (!markerVisible || adminMapMarker._latlng.lat!==mlat)){
+            if(hasMarker && (!markerVisible ||
+              Math.abs(adminMapMarker._latlng.lat-mlat)>0.000001 ||
+              Math.abs(adminMapMarker._latlng.lng-mlng)>0.000001)){
               showAdminMarker(mlat, mlng);
             } else if(!hasMarker && markerVisible){
               leafMap.removeLayer(adminMapMarker); adminMapMarker=null;
               if(CU.type==='admin'){
-                document.getElementById('btn-remove-marker').style.display='none';
-                document.getElementById('btn-place-marker').style.display='block';
+                const bp=document.getElementById('btn-place-marker');
+                const br=document.getElementById('btn-remove-marker');
+                if(bp)bp.style.display='block';
+                if(br)br.style.display='none';
               }
             }
           }
@@ -3269,6 +3292,10 @@ async function autoStopGame(){
 
 // ══ POINT D'INTÉRÊT ADMIN ════════════════════════════════════════
 function adminStartPlaceMarker(){
+  if(!event_){
+    toast('!','Info','Aucun evenement actif');
+    return;
+  }
   adminPlacingMarker = true;
   closeDrawer('admin');
   toast('📍','Point','Appuyez sur la carte pour placer le point');
@@ -3276,28 +3303,31 @@ function adminStartPlaceMarker(){
     adminPlacingMarker = false;
     const {lat,lng} = e.latlng;
     try{
-      if(game){
-        await sbPatch('games?id=eq.'+game.id, {admin_marker_lat:lat, admin_marker_lng:lng});
-        game.admin_marker_lat=lat; game.admin_marker_lng=lng;
-      }
+      await sbPatch('events?id=eq.'+event_.id, {admin_marker_lat:lat, admin_marker_lng:lng});
+      event_.admin_marker_lat=lat; event_.admin_marker_lng=lng;
       showAdminMarker(lat, lng);
-      toast('📍','Point','Point place !');
-    }catch(e){ toast('X','Erreur',''+e.message); }
+      toast('📍','Point','Point place ! Visible par tous les joueurs.');
+    }catch(err){ toast('X','Erreur',''+err.message); }
   });
 }
 
 async function adminRemoveMarker(){
+  if(!event_) return;
   try{
-    if(game){
-      await sbPatch('games?id=eq.'+game.id, {admin_marker_lat:null, admin_marker_lng:null});
-      game.admin_marker_lat=null; game.admin_marker_lng=null;
-    }
+    await fetch(SB_URL+'/rest/v1/events?id=eq.'+event_.id,{
+      method:'PATCH',
+      headers:{...H,'Prefer':'return=minimal'},
+      body:JSON.stringify({admin_marker_lat:null, admin_marker_lng:null})
+    });
+    event_.admin_marker_lat=null; event_.admin_marker_lng=null;
     if(adminMapMarker&&leafMap){ leafMap.removeLayer(adminMapMarker); adminMapMarker=null; }
-    document.getElementById('btn-remove-marker').style.display='none';
-    document.getElementById('btn-place-marker').style.display='block';
+    const bp=document.getElementById('btn-place-marker');
+    const br=document.getElementById('btn-remove-marker');
+    if(bp)bp.style.display='block';
+    if(br)br.style.display='none';
     toast('✖','Point','Point supprime');
     closeDrawer('admin');
-  }catch(e){ toast('X','Erreur',''+e.message); }
+  }catch(err){ toast('X','Erreur',''+err.message); }
 }
 
 function showAdminMarker(lat, lng){
