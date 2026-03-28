@@ -1336,7 +1336,6 @@ function logout(){
   extraSeconds=0;
   unreadCount=0;lastSeenMsgId=null;
   selfReportModal=false;
-  if(compassMarker&&leafMap){leafMap.removeLayer(compassMarker);compassMarker=null;}
   if(adminMapMarker&&leafMap){leafMap.removeLayer(adminMapMarker);adminMapMarker=null;}
   if(myMarker&&leafMap){leafMap.removeLayer(myMarker);myMarker=null;}
   if(myAccCircle&&leafMap){leafMap.removeLayer(myAccCircle);myAccCircle=null;}
@@ -1470,7 +1469,7 @@ async function boot(){
   document.getElementById('app').style.display='flex';
   setupTopbar();initMap();buildTeams();buildBadges();
   await refreshScores();await refreshChat();
-  updatePhase();startTimer();startGPS();startCompass();startPolling();
+  updatePhase();startTimer();startGPS();startPolling();
   // Si une partie est déjà active au moment de la connexion, démarrer le zone check
   if(CU.type==='team' && game && game.status==='active'){
     startZoneCheck();
@@ -1694,8 +1693,7 @@ function showGPSBanner(show, msg){
 }
 
 let lastPositionSent = 0; // timestamp du dernier envoi Supabase
-let compassHeading = null; // cap de direction en degrés
-let compassMarker = null;  // marqueur flèche sur la carte
+
 let adminMapMarker = null; // marqueur point d'intérêt admin
 let adminPlacingMarker = false; // mode placement actif
 
@@ -1717,7 +1715,6 @@ function startGPS(){
     if(myAccCircle)leafMap.removeLayer(myAccCircle);
     if(pos.coords.accuracy<80)myAccCircle=L.circle([myLat,myLng],{radius:pos.coords.accuracy,color:'rgba(127,255,79,0.4)',fillColor:'rgba(127,255,79,0.05)',fillOpacity:1,weight:1}).addTo(leafMap);
     const t=teams.find(t=>t.id===myId);if(t){t.lat=myLat;t.lng=myLng;}
-    if(compassHeading!=null) updateCompassMarker();
     recordPosition(myId, myLat, myLng);
     // Envoi Supabase : toutes les 15 secondes max
     // Envoyer la position à Supabase (15s actif, 30s arrière-plan)
@@ -1742,87 +1739,6 @@ function startGPS(){
     showGPSBanner(true, msgs[err.code]||'GPS indisponible');
 
   },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
-}
-
-// ══ BOUSSOLE ═════════════════════════════════
-function startCompass(){
-  if(CU.type==='admin') return;
-  // DeviceOrientationEvent — demander permission sur iOS
-  if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
-    // iOS 13+ : demander la permission au premier clic
-    document.addEventListener('click', function askCompass(){
-      DeviceOrientationEvent.requestPermission().then(state=>{
-        if(state==='granted') listenCompass();
-      }).catch(()=>{});
-      document.removeEventListener('click', askCompass);
-    }, {once:true});
-  } else {
-    listenCompass();
-  }
-}
-
-function listenCompass(){
-  window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-  window.addEventListener('deviceorientation', handleOrientation, true);
-}
-
-// Filtre de lissage pour stabiliser la boussole
-const COMPASS_SMOOTH = 0.15; // 0 = aucun lissage, 1 = figé (0.15 = réactif mais stable)
-let _compassRawX = null; // composante X du vecteur (sin)
-let _compassRawY = null; // composante Y du vecteur (cos)
-let _lastCompassUpdate = 0;
-
-function handleOrientation(e){
-  let heading = null;
-  if(e.webkitCompassHeading != null){
-    heading = e.webkitCompassHeading;
-  } else if(e.absolute && e.alpha != null){
-    heading = (360 - e.alpha) % 360;
-  } else if(e.alpha != null){
-    heading = (360 - e.alpha) % 360;
-  }
-  if(heading == null) return;
-
-  // Lissage par moyenne exponentielle sur les composantes sin/cos
-  // (évite les sauts de 359° → 1° qui fausseraient une moyenne simple)
-  const rad = heading * Math.PI / 180;
-  const sinH = Math.sin(rad);
-  const cosH = Math.cos(rad);
-  if(_compassRawX === null){
-    _compassRawX = sinH; _compassRawY = cosH;
-  } else {
-    _compassRawX = _compassRawX * (1 - COMPASS_SMOOTH) + sinH * COMPASS_SMOOTH;
-    _compassRawY = _compassRawY * (1 - COMPASS_SMOOTH) + cosH * COMPASS_SMOOTH;
-  }
-  const smoothed = (Math.atan2(_compassRawX, _compassRawY) * 180 / Math.PI + 360) % 360;
-  compassHeading = smoothed;
-
-  // Limiter les mises à jour de la carte à 4 fois par seconde max
-  const now = Date.now();
-  if(now - _lastCompassUpdate < 250) return;
-  _lastCompassUpdate = now;
-  updateCompassMarker();
-}
-
-function updateCompassMarker(){
-  if(!leafMap || myLat == null || myLng == null || compassHeading == null) return;
-  // Style Google Maps : cercle central + cône de direction en SVG
-  const c = CU.color;
-  const h = compassHeading;
-  const toRad = a => a * Math.PI / 180;
-  const cx = 36, cy = 36, r = 30, angle = 50;
-  const x1 = +(cx + r * Math.sin(toRad(h - angle/2))).toFixed(1);
-  const y1 = +(cy - r * Math.cos(toRad(h - angle/2))).toFixed(1);
-  const x2 = +(cx + r * Math.sin(toRad(h + angle/2))).toFixed(1);
-  const y2 = +(cy - r * Math.cos(toRad(h + angle/2))).toFixed(1);
-  const arrowHtml = `<svg width="72" height="72" viewBox="0 0 72 72" style="overflow:visible;pointer-events:none"><defs><radialGradient id="cg${c.replace('#','')}" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="${c}" stop-opacity="0.5"/><stop offset="100%" stop-color="${c}" stop-opacity="0.05"/></radialGradient></defs><path d="M${cx},${cy} L${x1},${y1} A${r},${r} 0 0,1 ${x2},${y2} Z" fill="url(#cg${c.replace('#','')})" stroke="${c}" stroke-width="0.8" stroke-opacity="0.6"/><circle cx="${cx}" cy="${cy}" r="9" fill="${c}" stroke="#fff" stroke-width="2.5"/><circle cx="${cx}" cy="${cy}" r="3.5" fill="#fff" opacity="0.95"/></svg>`;
-  const icon = L.divIcon({className:'',html:arrowHtml,iconSize:[72,72],iconAnchor:[36,36]});
-  if(compassMarker){
-    compassMarker.setLatLng([myLat,myLng]);
-    compassMarker.setIcon(icon);
-  } else {
-    compassMarker = L.marker([myLat,myLng],{icon,zIndexOffset:1001,interactive:false}).addTo(leafMap);
-  }
 }
 
 // ══ SCORE ENGINE ══════════════════════════════
