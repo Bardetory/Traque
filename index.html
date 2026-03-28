@@ -1766,9 +1766,13 @@ function listenCompass(){
   window.addEventListener('deviceorientation', handleOrientation, true);
 }
 
+// Filtre de lissage pour stabiliser la boussole
+const COMPASS_SMOOTH = 0.15; // 0 = aucun lissage, 1 = figé (0.15 = réactif mais stable)
+let _compassRawX = null; // composante X du vecteur (sin)
+let _compassRawY = null; // composante Y du vecteur (cos)
+let _lastCompassUpdate = 0;
+
 function handleOrientation(e){
-  // webkitCompassHeading : iOS (cap magnétique direct)
-  // alpha avec absolute=true : Android (cap absolu)
   let heading = null;
   if(e.webkitCompassHeading != null){
     heading = e.webkitCompassHeading;
@@ -1778,7 +1782,25 @@ function handleOrientation(e){
     heading = (360 - e.alpha) % 360;
   }
   if(heading == null) return;
-  compassHeading = heading;
+
+  // Lissage par moyenne exponentielle sur les composantes sin/cos
+  // (évite les sauts de 359° → 1° qui fausseraient une moyenne simple)
+  const rad = heading * Math.PI / 180;
+  const sinH = Math.sin(rad);
+  const cosH = Math.cos(rad);
+  if(_compassRawX === null){
+    _compassRawX = sinH; _compassRawY = cosH;
+  } else {
+    _compassRawX = _compassRawX * (1 - COMPASS_SMOOTH) + sinH * COMPASS_SMOOTH;
+    _compassRawY = _compassRawY * (1 - COMPASS_SMOOTH) + cosH * COMPASS_SMOOTH;
+  }
+  const smoothed = (Math.atan2(_compassRawX, _compassRawY) * 180 / Math.PI + 360) % 360;
+  compassHeading = smoothed;
+
+  // Limiter les mises à jour de la carte à 4 fois par seconde max
+  const now = Date.now();
+  if(now - _lastCompassUpdate < 250) return;
+  _lastCompassUpdate = now;
   updateCompassMarker();
 }
 
